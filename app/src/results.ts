@@ -8,6 +8,14 @@ export type Item = {
   actions: Action[];
 };
 export type Chip = { label: string; valid: boolean };
+/** What the preview pane shows for a file or folder; `code` lines are [color, text] runs. */
+export type Preview =
+  | { kind: "image"; url: string }
+  | { kind: "code"; lines: [string, string][][]; truncated: boolean }
+  | { kind: "markdown"; html: string }
+  | { kind: "folder"; entries: { name: string; dir: boolean }[]; total: number }
+  | { kind: "document"; text: string; truncated: boolean }
+  | { kind: "nothing" };
 export type Batch = { id: number; items: Item[]; chips: Chip[] };
 export type Shown = { id: number; items: Item[]; chips: Chip[] };
 

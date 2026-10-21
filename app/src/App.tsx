@@ -1,5 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
-import { createMemo, createSignal, For, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Match, on, onMount, Show, Switch } from "solid-js";
 import {
   applyBatches,
   firstVisible,
@@ -8,6 +8,7 @@ import {
   type Batch,
   type Chip,
   type Item,
+  type Preview,
   type Shown,
 } from "./results";
 import "./App.css";
@@ -30,6 +31,26 @@ function App() {
   const [confirming, setConfirming] = createSignal<Item | undefined>();
 
   const current = () => items()[selected()];
+  const [preview, setPreview] = createSignal<Preview | undefined>();
+  const previewOf = <K extends Preview["kind"]>(kind: K) => {
+    const p = preview();
+    return p?.kind === kind ? (p as Extract<Preview, { kind: K }>) : undefined;
+  };
+  let previewTimer = 0;
+  // Files and folders get a content preview, asked for once the selection settles.
+  createEffect(
+    on(current, (item) => {
+      setPreview(undefined);
+      clearTimeout(previewTimer);
+      if (!item?.id.startsWith("path:")) return;
+      const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+      previewTimer = setTimeout(() => {
+        invoke<Preview>("preview", { path: item.id.slice(5), dark }).then((p) => {
+          if (current()?.id === item.id) setPreview(p);
+        });
+      }, 60);
+    }),
+  );
   const range = createMemo(() => visibleRange(scrollTop(), viewport(), ROW, items().length));
   const rows = createMemo(() => {
     const [start, end] = range();
@@ -218,7 +239,49 @@ function App() {
                 <Show when={item().icon}>{(src) => <img class="preview-icon" src={src()} alt="" />}</Show>
                 <h2>{item().title}</h2>
                 <p class="subtitle">{item().subtitle}</p>
-                <pre>{item().preview}</pre>
+                <Switch fallback={<pre>{item().preview}</pre>}>
+                  <Match when={previewOf("image")}>
+                    {(p) => <img class="thumb" src={p().url} alt="" onError={() => setPreview({ kind: "nothing" })} />}
+                  </Match>
+                  <Match when={previewOf("code")}>
+                    {(p) => (
+                      <pre class="code">
+                        <For each={p().lines}>
+                          {(line) => (
+                            <div>
+                              <For each={line}>{([color, text]) => <span style={{ color }}>{text}</span>}</For>
+                            </div>
+                          )}
+                        </For>
+                        <Show when={p().truncated}>
+                          <div class="more">…</div>
+                        </Show>
+                      </pre>
+                    )}
+                  </Match>
+                  <Match when={previewOf("markdown")}>
+                    {/* Raw HTML was dropped in Rust; links stay inert so the pane never navigates. */}
+                    {(p) => <div class="markdown" innerHTML={p().html} onClick={(e) => e.preventDefault()} />}
+                  </Match>
+                  <Match when={previewOf("folder")}>
+                    {(p) => (
+                      <ul class="listing">
+                        <For each={p().entries}>
+                          {(e) => <li classList={{ dir: e.dir }}>{e.name}</li>}
+                        </For>
+                        <Show when={p().total > p().entries.length}>
+                          <li class="more">and {p().total - p().entries.length} more</li>
+                        </Show>
+                        <Show when={p().total === 0}>
+                          <li class="more">Empty folder</li>
+                        </Show>
+                      </ul>
+                    )}
+                  </Match>
+                  <Match when={previewOf("document")}>
+                    {(p) => <pre>{p().text + (p().truncated ? "\n…" : "")}</pre>}
+                  </Match>
+                </Switch>
               </>
             )}
           </Show>

@@ -6,6 +6,7 @@ mod fileops;
 mod files;
 mod focus;
 mod hotkey;
+mod preview;
 mod query;
 mod rank;
 mod telemetry;
@@ -261,6 +262,18 @@ pub fn run() {
             }
             .expect("static response parts are valid")
         })
+        // Thumbnails take tens of milliseconds, so they are drawn off the webview's thread.
+        .register_asynchronous_uri_scheme_protocol("thumb", |_ctx, request, responder| {
+            let query = request.uri().query().unwrap_or("").to_string();
+            std::thread::spawn(move || {
+                let response = tauri::http::Response::builder();
+                let response = match preview::thumbnail(&query) {
+                    Some(png) => response.header("Content-Type", "image/png").body(png),
+                    None => response.status(404).body(Vec::new()),
+                };
+                responder.respond(response.expect("static response parts are valid"));
+            });
+        })
         .manage(Telemetry::default())
         .setup(|app| {
             let db = common::data_dir().join("seekr.db");
@@ -297,6 +310,7 @@ pub fn run() {
             query::query,
             query::run_action,
             query::toggle_pin,
+            preview::preview,
             telemetry::panel_ready,
             telemetry::record_latency,
         ])

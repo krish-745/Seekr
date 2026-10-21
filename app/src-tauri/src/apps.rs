@@ -22,8 +22,9 @@ use windows::{
         UI::{
             Shell::{
                 BHID_EnumItems, FOLDERID_AppsFolder, IEnumShellItems, IShellItem, IShellItem2,
-                IShellItemImageFactory, KF_FLAG_DEFAULT, SHGetKnownFolderItem, SIGDN,
-                SIGDN_NORMALDISPLAY, SIGDN_PARENTRELATIVEPARSING, SIIGBF_ICONONLY, ShellExecuteW,
+                IShellItemImageFactory, KF_FLAG_DEFAULT, SHCreateItemFromParsingName,
+                SHGetKnownFolderItem, SIGDN, SIGDN_NORMALDISPLAY, SIGDN_PARENTRELATIVEPARSING,
+                SIIGBF, SIIGBF_ICONONLY, SIIGBF_THUMBNAILONLY, ShellExecuteW,
             },
             WindowsAndMessaging::SW_SHOWNORMAL,
         },
@@ -214,27 +215,34 @@ fn cached_icon(item: &IShellItem, id: &str, icon_dir: &Path) -> Option<String> {
     let file = format!("{:016x}.png", fnv1a(id));
     let path = icon_dir.join(&file);
     if !path.exists() {
-        let rendered = render_icon(item).and_then(|(w, h, rgba)| {
-            let mut png = Vec::new();
-            let mut encoder = png::Encoder::new(&mut png, w, h);
-            encoder.set_color(png::ColorType::Rgba);
-            encoder.set_depth(png::BitDepth::Eight);
-            encoder.write_header().ok()?.write_image_data(&rgba).ok()?;
-            fs::write(&path, png).ok()
-        });
-        rendered?;
+        let png = render(item, ICON_PX, SIIGBF_ICONONLY)?;
+        fs::write(&path, png).ok()?;
     }
     Some(format!("http://icon.localhost/{file}"))
 }
 
-/// Renders the shell icon to straight-alpha RGBA.
-fn render_icon(item: &IShellItem) -> Option<(u32, u32, Vec<u8>)> {
+/// The shell's thumbnail of the file at `path` as a PNG at most `px` square, or None when it has
+/// no thumbnail handler. Call with COM initialised on this thread.
+pub fn thumbnail_png(path: &str, px: i32) -> Option<Vec<u8>> {
+    let item: IShellItem = unsafe { SHCreateItemFromParsingName(&HSTRING::from(path), None).ok()? };
+    render(&item, px, SIIGBF_THUMBNAILONLY)
+}
+
+/// Renders the shell image of `item` to a straight-alpha RGBA PNG.
+fn render(item: &IShellItem, px: i32, flags: SIIGBF) -> Option<Vec<u8>> {
+    let (w, h, rgba) = render_rgba(item, px, flags)?;
+    let mut png = Vec::new();
+    let mut encoder = png::Encoder::new(&mut png, w, h);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.write_header().ok()?.write_image_data(&rgba).ok()?;
+    Some(png)
+}
+
+fn render_rgba(item: &IShellItem, px: i32, flags: SIIGBF) -> Option<(u32, u32, Vec<u8>)> {
     let factory: IShellItemImageFactory = item.cast().ok()?;
-    let size = SIZE {
-        cx: ICON_PX,
-        cy: ICON_PX,
-    };
-    let bitmap = unsafe { factory.GetImage(size, SIIGBF_ICONONLY).ok()? };
+    let size = SIZE { cx: px, cy: px };
+    let bitmap = unsafe { factory.GetImage(size, flags).ok()? };
     let pixels = bitmap_bgra(bitmap);
     unsafe {
         let _ = DeleteObject(HGDIOBJ(bitmap.0));

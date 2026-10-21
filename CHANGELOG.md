@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Previews for files and folders: highlighted code and text (UTF-8 or UTF-16, first 64 KB), Markdown (raw HTML is dropped and links don't navigate), the text of Word, PowerPoint and Excel files, folder listings, and shell thumbnails for images, video and PDFs where Windows has a thumbnail handler. Cloud-only files are never read, so previewing doesn't download them. PDF text needs pdfium, which comes later.
 - File actions: Open with…, Copy file (pastes into Explorer as a copy), Copy path, Open in Terminal (Windows Terminal, or PowerShell), Properties, and Move to Recycle Bin, which asks for a second Enter first.
 - Alt+F4 or a close message on the panel hides it instead of quitting Seekr; Quit is in the tray and in Seekr's commands.
 - File filters: `ext:` `kind:` `folder:` `in:` `dm:`/`modified:` `size:` `"exact"` and `-exclude` (see Search syntax in the README), shown as chips under the search box. Filters alone list the newest matches first, and queries with filters skip app results. Sizes and dates for C: come from a background walk after the service's snapshot (about 24 s); changes are re-read as they happen. The index cache format changed, so the first start after updating rebuilds it.

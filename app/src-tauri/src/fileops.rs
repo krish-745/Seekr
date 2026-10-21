@@ -86,11 +86,11 @@ pub fn recycle(path: &str) -> Result<(), String> {
     }
 }
 
-/// COM for the shell dialogs, released when dropped.
-struct Com(bool);
+/// COM for the shell, released when dropped.
+pub(crate) struct Com(bool);
 
 impl Com {
-    fn init() -> Self {
+    pub(crate) fn init() -> Self {
         Self(unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok())
     }
 }
