@@ -112,6 +112,59 @@ impl Index {
         }
     }
 
+    /// Applies a batch from the no-admin watcher. Unlike the journal, a watcher reports only the
+    /// top of a folder that was deleted or moved away, so everything under it goes too.
+    pub fn apply_watched(&mut self, records: &[Record]) {
+        let mut folder_removed = false;
+        for r in records {
+            folder_removed |= r.reason & USN_REASON_FILE_DELETE != 0
+                && self.by_frn.get(&r.frn).is_some_and(|&e| self.is_dir(e));
+            self.apply(r);
+        }
+        if folder_removed {
+            self.remove_orphans();
+        }
+    }
+
+    /// Deletes every entry with a deleted ancestor, in one pass over the index.
+    fn remove_orphans(&mut self) {
+        const UNKNOWN: u8 = 0;
+        const LIVE: u8 = 1;
+        const DEAD: u8 = 2;
+        let mut state = vec![UNKNOWN; self.frns.len()];
+        let mut chain = Vec::new();
+        for start in 0..self.frns.len() as u32 {
+            let mut at = start;
+            let verdict = loop {
+                if at == NONE {
+                    break LIVE;
+                }
+                let i = at as usize;
+                if state[i] != UNKNOWN {
+                    break state[i];
+                }
+                if self.flags[i] & DELETED != 0 {
+                    break DEAD;
+                }
+                chain.push(at);
+                at = self.parents[i];
+                if chain.len() > 512 {
+                    break LIVE; // A parent loop; leave it alone.
+                }
+            };
+            for i in chain.drain(..) {
+                let i = i as usize;
+                state[i] = verdict;
+                if verdict == DEAD && self.flags[i] & DELETED == 0 {
+                    self.flags[i] |= DELETED;
+                    if self.by_frn.get(&self.frns[i]) == Some(&(i as u32)) {
+                        self.by_frn.remove(&self.frns[i]);
+                    }
+                }
+            }
+        }
+    }
+
     fn push(&mut self, r: &Record, parent: u32) {
         let i = self.frns.len() as u32;
         self.frns.push(r.frn);
@@ -130,6 +183,10 @@ impl Index {
 
     pub fn len(&self) -> usize {
         self.by_frn.len()
+    }
+
+    pub fn contains(&self, frn: u64) -> bool {
+        self.by_frn.contains_key(&frn)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -513,6 +570,24 @@ mod tests {
         index.apply(&gone);
         assert!(names(&index, "notes").is_empty());
         assert_eq!(index.len(), 5);
+    }
+
+    #[test]
+    fn watched_folder_removal_takes_its_contents() {
+        let mut index = sample();
+        let mut gone = rec(11, 10, "me", true);
+        gone.reason = USN_REASON_FILE_DELETE;
+        // The folder comes back under the same id with one file, as after a rename round trip.
+        let back = rec(11, 10, "me", true);
+        let kept = rec(14, 11, "notes.txt", false);
+        index.apply_watched(&[gone.clone(), back, kept]);
+        assert_eq!(names(&index, "notes"), ["notes.txt"]);
+        assert!(names(&index, "report").is_empty(), "not re-added, so gone");
+        assert_eq!(index.len(), 3);
+
+        index.apply_watched(&[gone]);
+        assert!(names(&index, "notes").is_empty());
+        assert_eq!(index.len(), 1, "only Users is left");
     }
 
     #[test]

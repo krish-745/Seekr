@@ -1,27 +1,31 @@
-//! Whole-drive file-name search: an in-memory index fed by the SeekrIndex service and cached on
-//! disk, so a restart only catches up from the last USN instead of re-reading the drive.
+//! Whole-drive file-name search: one in-memory index per fixed drive, cached on disk. C: is fed
+//! by the SeekrIndex service, so a restart only catches up from the last USN. Other drives, and
+//! C: when the service isn't installed, use the no-admin fallback: a walk, then a watcher.
 
 use std::{
+    collections::BTreeMap,
     fs,
     io::{self, BufReader, BufWriter},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Mutex, RwLock,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc::{self, RecvTimeoutError},
     },
     time::{Duration, Instant},
 };
 
 use fsindex::{
-    index::{Index, can_narrow},
+    index::{Hit, Index, can_narrow},
+    scan::{self, Change},
     wire::{self, Message, PIPE_NAME},
 };
 use tauri::{AppHandle, Manager};
 
 use crate::{direct, query::Item, rank::Ranker};
 
-/// shortcut: C: only, which is the only volume the service reads; add drives with it.
-const DRIVE: char = 'C';
+/// The only volume the service reads.
+const SERVICE_DRIVE: char = 'C';
 /// Fuzzy matches re-ranked with location, frecency and pins, and how many of those are shown.
 const CANDIDATES: usize = 300;
 const MAX_RESULTS: usize = 50;
@@ -52,50 +56,73 @@ const WORK_FOLDERS: [&str; 3] = [r"\desktop", r"\documents", r"\downloads"];
 /// Narrowing levels kept while typing; a 16-character query rarely needs more.
 const MAX_LEVELS: usize = 16;
 
-/// The index generation they belong to, and (query, every entry it matched) pairs, each query
-/// extending the one before.
-type Levels = (u64, Vec<(String, Vec<u32>)>);
+/// The index generation they belong to, and (query, every entry it matched on each drive)
+/// pairs, each query extending the one before.
+type Levels = (u64, Vec<(String, BTreeMap<char, Vec<u32>>)>);
 
 #[derive(Default)]
 pub struct Files {
-    index: RwLock<Option<Index>>,
-    /// Bumped on every change to `index`, which invalidates `levels`.
+    drives: RwLock<BTreeMap<char, Index>>,
+    /// Bumped on every change to `drives`, which invalidates `levels`.
     generation: AtomicU64,
     levels: Mutex<Levels>,
 }
 
-fn cache_path() -> PathBuf {
-    common::data_dir().join("files-C.idx")
+impl Files {
+    fn set(&self, drive: char, index: Index) {
+        self.drives.write().unwrap().insert(drive, index);
+        self.generation.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+fn cache_path(drive: char) -> PathBuf {
+    common::data_dir().join(format!("files-{drive}.idx"))
 }
 
 pub fn start(app: &AppHandle) {
-    let app = app.clone();
-    let spawned = std::thread::Builder::new()
-        .name("file-index".into())
-        .spawn(move || run(&app));
-    if let Err(e) = spawned {
-        tracing::error!("no file search: {e}");
+    let service = service_installed();
+    for drive in scan::fixed_drives() {
+        let app = app.clone();
+        let use_service = service && drive == SERVICE_DRIVE;
+        let spawned = std::thread::Builder::new()
+            .name(format!("file-index-{drive}"))
+            .spawn(move || run(&app, drive, use_service));
+        if let Err(e) = spawned {
+            tracing::error!("no file search on {drive}: {e}");
+        }
     }
 }
 
-fn run(app: &AppHandle) {
+/// shortcut: an installed service is assumed to be running, so a stopped one leaves C: on its
+/// cached names until it's back; ask the service manager if that turns out to matter.
+fn service_installed() -> bool {
+    std::env::var_os("ProgramFiles")
+        .is_some_and(|p| Path::new(&p).join(r"Seekr\seekr-svc.exe").exists())
+}
+
+fn run(app: &AppHandle, drive: char, use_service: bool) {
     let files = app.state::<Files>();
     let started = Instant::now();
-    match fs::File::open(cache_path()).and_then(|f| Index::load(BufReader::new(f))) {
+    match fs::File::open(cache_path(drive)).and_then(|f| Index::load(BufReader::new(f))) {
         Ok(index) => {
             tracing::info!(
-                "loaded {} files from the cache in {:?}",
+                "loaded {} names on {drive}: from the cache in {:?}",
                 index.len(),
                 started.elapsed()
             );
-            *files.index.write().unwrap() = Some(index);
+            files.set(drive, index);
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-        Err(e) => tracing::warn!("file cache unusable ({e}); waiting for a fresh snapshot"),
+        Err(e) => tracing::warn!("{drive}: cache unusable ({e}); indexing it afresh"),
     }
     loop {
-        if let Err(e) = follow(&files) {
-            tracing::info!("file index service unavailable: {e}");
+        let stopped = if use_service {
+            follow(&files)
+        } else {
+            fallback(&files, drive)
+        };
+        if let Err(e) = stopped {
+            tracing::info!("{drive}: file index unavailable: {e}");
         }
         std::thread::sleep(RECONNECT_AFTER);
     }
@@ -109,10 +136,10 @@ fn follow(files: &Files) -> io::Result<()> {
         .write(true)
         .open(PIPE_NAME)?;
     let (journal_id, usn) = files
-        .index
+        .drives
         .read()
         .unwrap()
-        .as_ref()
+        .get(&SERVICE_DRIVE)
         .map_or((0, 0), |i| (i.journal_id, i.usn));
     wire::write_message(&mut pipe, &Message::Hello { journal_id, usn })?;
     let mut saved_at = Instant::now();
@@ -129,13 +156,12 @@ fn follow(files: &Files) -> io::Result<()> {
                     index.len(),
                     started.elapsed()
                 );
-                *files.index.write().unwrap() = Some(index);
-                files.generation.fetch_add(1, Ordering::SeqCst);
-                save(files);
+                files.set(SERVICE_DRIVE, index);
+                save(files, SERVICE_DRIVE);
                 (saved_at, dirty) = (Instant::now(), false);
             }
             Message::Changes { next_usn, records } => {
-                if let Some(index) = files.index.write().unwrap().as_mut() {
+                if let Some(index) = files.drives.write().unwrap().get_mut(&SERVICE_DRIVE) {
                     records.iter().for_each(|r| index.apply(r));
                     index.usn = next_usn;
                     files.generation.fetch_add(1, Ordering::SeqCst);
@@ -150,29 +176,90 @@ fn follow(files: &Files) -> io::Result<()> {
             }
         }
         if dirty && saved_at.elapsed() > SAVE_EVERY {
-            save(files);
+            save(files, SERVICE_DRIVE);
             (saved_at, dirty) = (Instant::now(), false);
         }
     }
 }
 
-fn save(files: &Files) {
-    let guard = files.index.read().unwrap();
-    let Some(index) = guard.as_ref() else {
+/// Walks `drive`, then follows its watcher, walking again whenever the watcher drops changes.
+fn fallback(files: &Files, drive: char) -> io::Result<()> {
+    let root = PathBuf::from(format!(r"{drive}:\"));
+    let (tx, rx) = mpsc::channel();
+    let watched = root.clone();
+    // Started first, so changes made during the walk queue up and are applied after it.
+    std::thread::Builder::new()
+        .name(format!("file-watch-{drive}"))
+        .spawn(move || {
+            if let Err(e) = scan::watch(&watched, |changes| tx.send(changes).is_ok()) {
+                tracing::warn!("{drive}: watcher stopped: {e}");
+            }
+        })?;
+    loop {
+        let started = Instant::now();
+        let index = scan::scan(&root, &AtomicBool::new(false))?;
+        tracing::info!(
+            "scanned {} names on {drive}: in {:?}",
+            index.len(),
+            started.elapsed()
+        );
+        files.set(drive, index);
+        save(files, drive);
+        let mut saved_at = Instant::now();
+        let mut dirty = false;
+        loop {
+            let changes = match rx.recv_timeout(SAVE_EVERY) {
+                Ok(changes) => changes,
+                Err(RecvTimeoutError::Timeout) => Vec::new(),
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err(io::Error::other("the watcher stopped"));
+                }
+            };
+            if changes.contains(&Change::Overflow) {
+                tracing::info!("{drive}: too many changes at once; scanning again");
+                break;
+            }
+            if !changes.is_empty() {
+                // Walking a folder that moved in happens under the read lock, so search goes on.
+                let records = files
+                    .drives
+                    .read()
+                    .unwrap()
+                    .get(&drive)
+                    .map(|index| scan::records(index, &root, &changes))
+                    .unwrap_or_default();
+                if let Some(index) = files.drives.write().unwrap().get_mut(&drive) {
+                    index.apply_watched(&records);
+                }
+                files.generation.fetch_add(1, Ordering::SeqCst);
+                dirty = true;
+            }
+            if dirty && saved_at.elapsed() > SAVE_EVERY {
+                save(files, drive);
+                (saved_at, dirty) = (Instant::now(), false);
+            }
+        }
+    }
+}
+
+fn save(files: &Files, drive: char) {
+    let guard = files.drives.read().unwrap();
+    let Some(index) = guard.get(&drive) else {
         return;
     };
     let started = Instant::now();
-    let tmp = cache_path().with_extension("tmp");
+    let path = cache_path(drive);
+    let tmp = path.with_extension("tmp");
     let saved = fs::File::create(&tmp)
         .and_then(|f| index.save(BufWriter::new(f)))
-        .and_then(|()| fs::rename(&tmp, cache_path()));
+        .and_then(|()| fs::rename(&tmp, &path));
     match saved {
         Ok(()) => tracing::info!(
-            "saved {} files to the cache in {:?}",
+            "saved {} names on {drive}: to the cache in {:?}",
             index.len(),
             started.elapsed()
         ),
-        Err(e) => tracing::error!("could not save the file cache: {e}"),
+        Err(e) => tracing::error!("could not save the {drive}: cache: {e}"),
     }
 }
 
@@ -184,31 +271,31 @@ pub fn search(
 ) -> Option<Vec<Item>> {
     let query = query.trim();
     let files = app.state::<Files>();
-    let guard = files.index.read().unwrap();
-    let too_short = query.chars().count() < MIN_QUERY_CHARS;
-    let (Some(index), false) = (guard.as_ref(), too_short) else {
+    let drives = files.drives.read().unwrap();
+    if drives.is_empty() || query.chars().count() < MIN_QUERY_CHARS {
         return Some(Vec::new());
-    };
-    let hits = narrowed_search(&files, index, query, cancelled)?;
+    }
+    let hits = narrowed_search(&files, &drives, query, cancelled)?;
     let boosts = app.state::<Ranker>().boosts(query);
     let profile = std::env::var("USERPROFILE")
         .unwrap_or_default()
         .to_lowercase();
-    let mut scored: Vec<(f64, String, u32)> = hits
+    let mut scored: Vec<(f64, String, &Index, u32)> = hits
         .into_iter()
-        .map(|hit| {
-            let path = index.path(DRIVE, hit.entry);
+        .map(|(drive, hit)| {
+            let index = &drives[&drive];
+            let path = index.path(drive, hit.entry);
             let score = f64::from(hit.score)
                 + place(&path, &profile)
                 + boosts.score(&format!("path:{path}"));
-            (score, path, hit.entry)
+            (score, path, index, hit.entry)
         })
         .collect();
-    scored.sort_by(|(a, x, _), (b, y, _)| b.total_cmp(a).then(x.len().cmp(&y.len())));
+    scored.sort_by(|(a, x, ..), (b, y, ..)| b.total_cmp(a).then(x.len().cmp(&y.len())));
     let items = scored
         .into_iter()
         .take(MAX_RESULTS)
-        .map(|(_, path, entry)| {
+        .map(|(_, path, index, entry)| {
             let folder = path.rsplit_once('\\').map_or("", |(f, _)| f).to_string();
             let name = index.name(entry).to_string();
             boosts.decorate(direct::path_item(path, name, folder))
@@ -221,10 +308,10 @@ pub fn search(
 /// makes every keystroke after the first a fraction of a full scan.
 fn narrowed_search(
     files: &Files,
-    index: &Index,
+    drives: &BTreeMap<char, Index>,
     query: &str,
     cancelled: &(dyn Fn() -> bool + Sync),
-) -> Option<Vec<fsindex::index::Hit>> {
+) -> Option<Vec<(char, Hit)>> {
     let mut levels = files.levels.lock().unwrap();
     let generation = files.generation.load(Ordering::SeqCst);
     if levels.0 != generation {
@@ -243,13 +330,20 @@ fn narrowed_search(
         .iter()
         .rev()
         .find(|(q, _)| can_narrow(q, query))
-        .map(|(_, all)| all.as_slice());
-    let matches = index.search(query, within, CANDIDATES, cancelled)?;
+        .map(|(_, all)| all);
+    let mut top = Vec::new();
+    let mut all = BTreeMap::new();
+    for (&drive, index) in drives {
+        let narrowed = within.and_then(|w| w.get(&drive)).map(Vec::as_slice);
+        let matches = index.search(query, narrowed, CANDIDATES, cancelled)?;
+        top.extend(matches.top.into_iter().map(|hit| (drive, hit)));
+        all.insert(drive, matches.all);
+    }
     let repeated = levels.1.last().is_some_and(|(q, _)| q == query);
     if !repeated && levels.1.len() < MAX_LEVELS {
-        levels.1.push((query.to_string(), matches.all));
+        levels.1.push((query.to_string(), all));
     }
-    Some(matches.top)
+    Some(top)
 }
 
 /// Where a result lives: system and build folders sink, the user's own work folders rise.

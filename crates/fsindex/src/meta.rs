@@ -44,10 +44,15 @@ impl Meta {
     }
 }
 
-/// Calls `on_entry`, from several threads at once, for everything under `root` (not `root`
+/// Calls `on_listing` with each folder's entries, from several threads at once, for everything
+/// under `root` (not `root`
 /// itself). Folders that can't be read, such as other users' profiles, are skipped. Returns
 /// `Interrupted` once `cancel` is set.
-pub fn walk(root: &Path, cancel: &AtomicBool, on_entry: impl Fn(Meta) + Sync) -> io::Result<()> {
+pub fn walk(
+    root: &Path,
+    cancel: &AtomicBool,
+    on_listing: impl Fn(Vec<Meta>) + Sync,
+) -> io::Result<()> {
     // One thread took 110 s for 2.2 M entries on this NVMe drive; listing parallelises well.
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get().min(8));
     // Folders waiting to be listed, and how many workers are listing one right now.
@@ -57,7 +62,7 @@ pub fn walk(root: &Path, cancel: &AtomicBool, on_entry: impl Fn(Meta) + Sync) ->
         for _ in 0..threads {
             s.spawn(|| {
                 let _priority = Background::begin();
-                worker(&work, &changed, cancel, &on_entry);
+                worker(&work, &changed, cancel, &on_listing);
             });
         }
     });
@@ -71,7 +76,7 @@ fn worker(
     work: &Mutex<(Vec<PathBuf>, usize)>,
     changed: &Condvar,
     cancel: &AtomicBool,
-    on_entry: &(impl Fn(Meta) + Sync),
+    on_listing: &(impl Fn(Vec<Meta>) + Sync),
 ) {
     loop {
         let dir = {
@@ -93,13 +98,17 @@ fn worker(
                 guard = changed.wait(guard).unwrap();
             }
         };
-        let mut found = Vec::new();
-        list(&dir, &mut |meta| {
-            if meta.is_dir && !meta.is_reparse_point() {
-                found.push(meta.path.clone());
-            }
-            on_entry(meta);
-        });
+        let mut listing = Vec::new();
+        list(&dir, &mut |meta| listing.push(meta));
+        let found: Vec<PathBuf> = listing
+            .iter()
+            .filter(|m| m.is_dir && !m.is_reparse_point())
+            .map(|m| m.path.clone())
+            .collect();
+        // One call per folder rather than per entry keeps callers' locks uncontended.
+        if !listing.is_empty() {
+            on_listing(listing);
+        }
         let mut guard = work.lock().unwrap();
         guard.0.extend(found);
         guard.1 -= 1;
@@ -209,8 +218,8 @@ mod tests {
         assert!(made.status.success(), "{made:?}");
 
         let seen = Mutex::new(Vec::new());
-        walk(&root, &AtomicBool::new(false), |m| {
-            seen.lock().unwrap().push(m)
+        walk(&root, &AtomicBool::new(false), |l| {
+            seen.lock().unwrap().extend(l)
         })
         .unwrap();
         let seen = seen.into_inner().unwrap();
@@ -249,9 +258,9 @@ mod tests {
         use std::sync::atomic::AtomicU64;
         let started = std::time::Instant::now();
         let (entries, bytes) = (AtomicU64::new(0), AtomicU64::new(0));
-        walk(Path::new(r"C:\"), &AtomicBool::new(false), |m| {
-            entries.fetch_add(1, Ordering::Relaxed);
-            bytes.fetch_add(m.size, Ordering::Relaxed);
+        walk(Path::new(r"C:\"), &AtomicBool::new(false), |l| {
+            entries.fetch_add(l.len() as u64, Ordering::Relaxed);
+            bytes.fetch_add(l.iter().map(|m| m.size).sum(), Ordering::Relaxed);
         })
         .unwrap();
         let entries = entries.into_inner();

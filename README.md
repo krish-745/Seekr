@@ -2,7 +2,7 @@
 
 A fast keyboard launcher for Windows: apps, files, file contents and meaning, plus everyday tools, all on one hotkey.
 
-**Status:** early development (Phase 2: whole-drive file search). Alt+Space opens the search panel: installed apps (Start menu and Store) and every file and folder name on C:. Content search, tools and AI come later.
+**Status:** early development (Phase 2: whole-drive file search). Alt+Space opens the search panel: installed apps (Start menu and Store) and every file and folder name on your fixed drives. Content search, tools and AI come later.
 
 ## Install
 
@@ -11,6 +11,7 @@ Build and install for daily use. This copies the app to `%LOCALAPPDATA%\Programs
 ```powershell
 scripts\install.ps1             # build, install, start
 scripts\install.ps1 -NoBuild    # install the existing target\release build
+scripts\install.ps1 -SkipService  # app only, no UAC prompt; C: then uses the slower no-admin scan
 scripts\install.ps1 -Uninstall  # remove the app; keeps your data in %LOCALAPPDATA%\Seekr and %APPDATA%\Seekr
 ```
 
