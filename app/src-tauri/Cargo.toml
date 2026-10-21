@@ -1,5 +1,5 @@
 [package]
-name = "launcher"
+name = "seekr"
 description = "Fast keyboard launcher for Windows"
 version.workspace = true
 edition.workspace = true
@@ -8,7 +8,7 @@ authors.workspace = true
 
 [lib]
 # The `_lib` suffix keeps the lib name distinct from the bin name (cargo#8519 on Windows).
-name = "launcher_lib"
+name = "seekr_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

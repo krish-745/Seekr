@@ -1,6 +1,6 @@
 [package]
 name = "common"
-description = "Shared paths, config and logging for Launcher processes"
+description = "Shared paths, config and logging for Seekr processes"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,4 +1,4 @@
-//! Shared paths, config and logging for all Launcher processes.
+//! Shared paths, config and logging for all Seekr processes.
 
 use std::{error::Error, fs, io, path::Path, path::PathBuf};
 
@@ -6,14 +6,14 @@ use serde::Deserialize;
 use tracing_appender::{non_blocking::WorkerGuard, rolling};
 
 /// The single app-ID constant; renaming the product starts here.
-pub const APP_NAME: &str = "Launcher";
+pub const APP_NAME: &str = "Seekr";
 
-/// `%LOCALAPPDATA%\Launcher`: indexes, databases, models, logs.
+/// `%LOCALAPPDATA%\Seekr`: indexes, databases, models, logs.
 pub fn data_dir() -> PathBuf {
     env_dir("LOCALAPPDATA")
 }
 
-/// `%APPDATA%\Launcher`: user config.
+/// `%APPDATA%\Seekr`: user config.
 pub fn config_dir() -> PathBuf {
     env_dir("APPDATA")
 }
@@ -55,7 +55,7 @@ impl Config {
     }
 }
 
-/// Logs to `%LOCALAPPDATA%\Launcher\logs\<name>.YYYY-MM-DD.log`, daily rotation, 7 files kept.
+/// Logs to `%LOCALAPPDATA%\Seekr\logs\<name>.YYYY-MM-DD.log`, daily rotation, 7 files kept.
 /// Keep the returned guard alive for the life of the process or buffered lines are lost.
 pub fn init_logging(name: &str) -> Result<WorkerGuard, Box<dyn Error + Send + Sync>> {
     let appender = rolling::Builder::new()
@@ -79,7 +79,7 @@ mod tests {
 
     fn write_temp(name: &str, text: &str) -> PathBuf {
         let path =
-            std::env::temp_dir().join(format!("launcher-test-{}-{name}.toml", std::process::id()));
+            std::env::temp_dir().join(format!("seekr-test-{}-{name}.toml", std::process::id()));
         fs::write(&path, text).unwrap();
         path
     }

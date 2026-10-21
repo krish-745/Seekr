@@ -1,4 +1,4 @@
-# Launcher
+# Seekr
 
 A fast keyboard launcher for Windows: apps, files, file contents and meaning, plus everyday tools, all on one hotkey.
 

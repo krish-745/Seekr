@@ -6,7 +6,7 @@ fn greet(name: &str) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let _log_guard = common::init_logging("launcher").expect("failed to start logging");
+    let _log_guard = common::init_logging("seekr").expect("failed to start logging");
     match common::Config::load() {
         Ok(cfg) => tracing::info!(?cfg, "config loaded"),
         Err(e) => tracing::error!("config.toml ignored: {e}"),
