@@ -77,7 +77,9 @@ pub async fn query(
     let (file_text, file_query) = (text.clone(), parsed.clone());
     let files = tauri::async_runtime::spawn_blocking(move || {
         let engine = searcher.state::<Engine>();
-        files::search(&searcher, &file_text, &file_query, &|| !engine.is_current(id))
+        files::search(&searcher, &file_text, &file_query, &|| {
+            !engine.is_current(id)
+        })
     });
     // A typed path or URL is what the user meant, so it leads, unranked.
     let mut items = direct::items(&text);
