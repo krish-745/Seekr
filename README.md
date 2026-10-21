@@ -4,6 +4,18 @@ A fast keyboard launcher for Windows: apps, files, file contents and meaning, pl
 
 **Status:** early development (Phase 1: launcher core). Alt+Space opens the search panel and launches installed apps (Start menu and Store); files, tools and AI come later.
 
+## Install
+
+Build and install for daily use (copies to `%LOCALAPPDATA%\Programs\Seekr`, starts hidden at login, power-saving GPU):
+
+```powershell
+scripts\install.ps1             # build, install, start
+scripts\install.ps1 -NoBuild    # install the existing target\release build
+scripts\install.ps1 -Uninstall  # remove the app; keeps your data in %LOCALAPPDATA%\Seekr and %APPDATA%\Seekr
+```
+
+Then press Alt+Space.
+
 ## Develop
 
 Requirements: Windows 11, Rust (stable, MSVC), Visual Studio Build Tools with the C++ workload, Node.js 20+.

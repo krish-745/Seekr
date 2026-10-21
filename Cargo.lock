@@ -3132,6 +3132,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
  "tracing",
+ "webview2-com",
  "windows",
 ]
 

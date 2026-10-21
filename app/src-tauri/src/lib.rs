@@ -45,6 +45,33 @@ pub(crate) fn toggle(app: &AppHandle) {
     }
 }
 
+/// WebView2 trims caches and memory when the target is low; the panel only needs that while hidden.
+fn set_webview_memory(w: &tauri::WebviewWindow, low: bool) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+        ICoreWebView2_19,
+    };
+    use windows::core::Interface;
+    let level = if low {
+        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW
+    } else {
+        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL
+    };
+    let queued = w.with_webview(move |webview| {
+        let set = unsafe {
+            webview
+                .controller()
+                .CoreWebView2()
+                .and_then(|core| core.cast::<ICoreWebView2_19>())
+                .and_then(|core| core.SetMemoryUsageTargetLevel(level))
+        };
+        if let Err(e) = set {
+            tracing::warn!("WebView2 memory target: {e}");
+        }
+    });
+    log_err("WebView2 memory target", queued);
+}
+
 /// The panel's window handle, for Win32 calls that need an owner window.
 pub(crate) fn panel_hwnd(app: &AppHandle) -> Option<windows::Win32::Foundation::HWND> {
     let hwnd = app.get_webview_window("main")?.hwnd().ok()?;
@@ -90,6 +117,7 @@ fn try_show(app: &AppHandle) -> tauri::Result<()> {
     }
     app.state::<Telemetry>().mark_shown();
     apps::refresh(app);
+    set_webview_memory(&w, false);
     w.show()?;
     // The first show of a never-shown undecorated window comes out a caption-height too tall.
     if let Some(size) = size
@@ -250,6 +278,9 @@ pub fn run() {
             if let WindowEvent::Focused(false) = event {
                 log_err("hide", window.hide());
                 window.state::<Telemetry>().flush();
+                if let Some(w) = window.app_handle().get_webview_window("main") {
+                    set_webview_memory(&w, true);
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![

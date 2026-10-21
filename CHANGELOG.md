@@ -2,8 +2,10 @@
 
 ## Unreleased
 
+- `scripts\install.ps1`: installs the release build to `%LOCALAPPDATA%\Programs\Seekr`, starts it hidden at login and sets the power-saving GPU preference; `-Uninstall` removes all of that and keeps your data.
+- WebView2 is asked to use less memory while the panel is hidden.
 - Desktop apps get Open file location (Ctrl+Enter), Run as administrator and Copy path; Store apps only open.
-- Typing a path (`C:\...`, `~\...`, `%WINDIR%\...`, `\server\share`) or a URL (`https://...`, `www....`) offers it as the first result, with Open, Show in folder and Copy.
+- Typing a path (`C:\...`, `~\...`, `%WINDIR%\...`, `\\server\share`) or a URL (`https://...`, `www....`) offers it as the first result, with Open, Show in folder and Copy.
 - Esc, the hotkey and copy actions give focus back to the window you were in, and check that Windows did it.
 - Ranking: fuzzy matching that favours word starts and acronyms ("vsc" finds Visual Studio Code), boosted by how often and how recently you chose a result for what you typed (14-day half-life). Results can be pinned to the top from the actions list. An empty search shows pins, then recently used results. Usage lives in `%LOCALAPPDATA%\Seekr\seekr.db`.
 - Fixed: the first time the panel opened it was a title bar's height too tall.
