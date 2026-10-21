@@ -12,9 +12,25 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Seekr",
-        "width": 800,
-        "height": 600
+        "width": 760,
+        "height": 480,
+        "visible": false,
+        "focus": false,
+        "decorations": false,
+        "transparent": true,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "skipTaskbar": true,
+        "alwaysOnTop": true,
+        "shadow": true,
+        "windowEffects": {
+          "effects": [
+            "mica"
+          ]
+        }
       }
     ],
     "security": {

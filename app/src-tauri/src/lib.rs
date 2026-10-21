@@ -1,19 +1,206 @@
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+mod hotkey;
+
+use tauri::{
+    AppHandle, Manager, PhysicalPosition, PhysicalSize, WindowEvent,
+    menu::{CheckMenuItem, Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+};
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+
+/// Panel size in logical pixels, scaled to the target monitor's DPI on every show.
+const PANEL: (f64, f64) = (760.0, 480.0);
+/// Passed by the login entry so the panel stays hidden until the hotkey.
+const HIDDEN_ARG: &str = "--hidden";
+
 #[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
+fn hide(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        log_err("hide", w.hide());
+    }
+}
+
+pub(crate) fn toggle(app: &AppHandle) {
+    match app.get_webview_window("main") {
+        Some(w) if w.is_visible().unwrap_or(false) => log_err("hide", w.hide()),
+        _ => show(app),
+    }
+}
+
+fn show(app: &AppHandle) {
+    log_err("show", try_show(app));
+}
+
+fn try_show(app: &AppHandle) -> tauri::Result<()> {
+    let Some(w) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+    let cursor = app.cursor_position()?;
+    let monitor = match app.monitor_from_point(cursor.x, cursor.y)? {
+        Some(m) => Some(m),
+        None => app.primary_monitor()?,
+    };
+    if let Some(m) = monitor {
+        let area = m.work_area();
+        let (x, y, width, height) = place(
+            (area.position.x, area.position.y),
+            (area.size.width, area.size.height),
+            m.scale_factor(),
+        );
+        // Move first so any DPI change between monitors lands before the final size is set.
+        w.set_position(PhysicalPosition::new(x, y))?;
+        w.set_size(PhysicalSize::new(width, height))?;
+        w.set_position(PhysicalPosition::new(x, y))?;
+    }
+    w.show()?;
+    w.set_focus()
+}
+
+/// Centered horizontally, a quarter of the free space above it, clamped to the work area.
+fn place(pos: (i32, i32), size: (u32, u32), scale: f64) -> (i32, i32, u32, u32) {
+    let width = ((PANEL.0 * scale).round() as u32).min(size.0);
+    let height = ((PANEL.1 * scale).round() as u32).min(size.1);
+    let x = pos.0 + ((size.0 - width) / 2) as i32;
+    let y = pos.1 + ((size.1 - height) / 4) as i32;
+    (x, y, width, height)
+}
+
+fn log_err<T>(what: &str, result: tauri::Result<T>) {
+    if let Err(e) = result {
+        tracing::error!("{what} failed: {e}");
+    }
+}
+
+fn register_hotkey(app: &AppHandle) {
+    let default = common::Config::default().hotkey;
+    let hotkey = match common::Config::load() {
+        Ok(cfg) => cfg.hotkey,
+        Err(e) => {
+            tracing::error!("config.toml ignored: {e}");
+            default.clone()
+        }
+    };
+    let shortcut: Shortcut = hotkey.parse().unwrap_or_else(|e| {
+        tracing::error!("hotkey {hotkey:?} is invalid ({e}); using {default}");
+        default.parse().expect("default hotkey parses")
+    });
+    match app.global_shortcut().register(shortcut) {
+        Ok(()) => tracing::info!("hotkey {shortcut} registered"),
+        Err(e) => {
+            tracing::warn!("RegisterHotKey failed for {shortcut} ({e}); using a keyboard hook");
+            match hotkey::install(shortcut, app.clone()) {
+                Ok(()) => tracing::info!("hotkey {shortcut} hooked"),
+                Err(e) => tracing::error!("no hotkey: {e}"),
+            }
+        }
+    }
+}
+
+fn build_tray(app: &tauri::App) -> tauri::Result<()> {
+    let at_login = app.autolaunch().is_enabled().unwrap_or(false);
+    let open = MenuItem::with_id(app, "open", "Open Seekr", true, None::<&str>)?;
+    let login =
+        CheckMenuItem::with_id(app, "login", "Start at login", true, at_login, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open, &login, &quit])?;
+    let icon = app
+        .default_window_icon()
+        .cloned()
+        .expect("bundled app icon");
+    TrayIconBuilder::new()
+        .icon(icon)
+        .tooltip("Seekr")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(move |app, event| match event.id.as_ref() {
+            "open" => show(app),
+            "login" => set_autostart(app, &login),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        // Show, not toggle: clicking the tray takes focus from the panel, which already hides it.
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show(tray.app_handle());
+            }
+        })
+        .build(app)?;
+    Ok(())
+}
+
+/// The menu item has already flipped its check mark; make the Run key match it.
+fn set_autostart(app: &AppHandle, item: &CheckMenuItem<tauri::Wry>) {
+    let want = item.is_checked().unwrap_or(false);
+    let autolaunch = app.autolaunch();
+    let result = if want {
+        autolaunch.enable()
+    } else {
+        autolaunch.disable()
+    };
+    if let Err(e) = result {
+        tracing::error!("start at login: {e}");
+        log_err("revert check", item.set_checked(!want));
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _log_guard = common::init_logging("seekr").expect("failed to start logging");
-    match common::Config::load() {
-        Ok(cfg) => tracing::info!(?cfg, "config loaded"),
-        Err(e) => tracing::error!("config.toml ignored: {e}"),
-    }
     tauri::Builder::default()
+        // Must be first: a second launch shows the running panel and exits.
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| show(app)))
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet])
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            Some(vec![HIDDEN_ARG]),
+        ))
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _, event| {
+                    if event.state == ShortcutState::Pressed {
+                        toggle(app);
+                    }
+                })
+                .build(),
+        )
+        .setup(|app| {
+            register_hotkey(app.handle());
+            build_tray(app)?;
+            if !std::env::args().any(|a| a == HIDDEN_ARG) {
+                show(app.handle());
+            }
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let WindowEvent::Focused(false) = event {
+                log_err("hide", window.hide());
+            }
+        })
+        .invoke_handler(tauri::generate_handler![hide])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn panel_is_centered_in_upper_part() {
+        // 1920x1080 at 125% with a 60 px taskbar: the panel is 950x600.
+        assert_eq!(place((0, 0), (1920, 1020), 1.25), (485, 105, 950, 600));
+    }
+
+    #[test]
+    fn panel_follows_offset_monitor_and_clamps() {
+        assert_eq!(
+            place((-1280, 200), (1280, 400), 1.0),
+            (-1020, 200, 760, 400)
+        );
+    }
 }

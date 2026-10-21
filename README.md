@@ -2,7 +2,7 @@
 
 A fast keyboard launcher for Windows: apps, files, file contents and meaning, plus everyday tools, all on one hotkey.
 
-**Status:** early development (Phase 0: project setup). Nothing user-facing works yet.
+**Status:** early development (Phase 1: launcher core). Alt+Space opens an empty search panel; nothing is searchable yet.
 
 ## Develop
 
