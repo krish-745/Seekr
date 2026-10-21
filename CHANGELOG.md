@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Whole-drive file search: every file and folder name on C: (from the SeekrIndex service) is searchable from the second character typed. One or two characters match as a substring; longer queries are fuzzy. Results favour your Desktop, Documents and Downloads, sink system and build folders, and learn from what you open. New files show up within milliseconds. The index is cached in `%LOCALAPPDATA%\Seekriles-C.idx`, so restarts take about 0.3 s.
+- Whole-drive file search: every file and folder name on C: (from the SeekrIndex service) is searchable from the second character typed. One or two characters match as a substring; longer queries are fuzzy. Results favour your Desktop, Documents and Downloads, sink system and build folders, and learn from what you open. New files show up within milliseconds. The index is cached in `%LOCALAPPDATA%\Seekr\files-C.idx`, so restarts take about 0.3 s.
 - SeekrIndex service (`seekr-svc.exe`, LocalSystem, installed to `C:\Program Files\Seekr` by `scripts\install.ps1` with one UAC prompt). It reads every file name on C: from the NTFS master file table, writes a snapshot only the signed-in user can read, then streams changes from the USN journal over a pipe only SYSTEM and that user can open. Other accounts' profiles and NTFS metadata files are left out.
 - `scripts\install.ps1`: installs the release build to `%LOCALAPPDATA%\Programs\Seekr`, starts it hidden at login and sets the power-saving GPU preference; `-Uninstall` removes all of that and keeps your data.
 - WebView2 is asked to use less memory while the panel is hidden.
