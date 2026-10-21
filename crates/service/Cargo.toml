@@ -1,0 +1,19 @@
+[package]
+name = "service"
+description = "Seekr's LocalSystem index service: reads the NTFS MFT and change journal for the signed-in user"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "seekr-svc"
+path = "src/main.rs"
+
+[dependencies]
+common = { path = "../common" }
+fsindex = { path = "../fsindex" }
+tracing = "0.1"
+windows-registry = "0.6"
+windows-service = "0.8"
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Environment", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_RemoteDesktop", "Win32_System_Threading"] }

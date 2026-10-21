@@ -115,7 +115,7 @@ impl Volume {
         loop {
             let read = match self.control(FSCTL_ENUM_USN_DATA, Some(as_bytes(&input)), &mut buf) {
                 Ok(n) => n,
-                Err(e) if e.raw_os_error() == Some(ERROR_HANDLE_EOF.0 as i32) => return Ok(()),
+                Err(e) if is_end_of_enumeration(&e) => return Ok(()),
                 Err(e) => return Err(e),
             };
             let Some((next, records)) = split_output(&buf[..read]) else {
@@ -126,21 +126,21 @@ impl Volume {
         }
     }
 
-    /// Reads journal records from `from` onwards. With `wait`, blocks until at least one new
-    /// record exists, so a tailing thread costs nothing while the disk is quiet. Returns the
-    /// records and the USN to continue from.
+    /// Reads journal records from `from` onwards. With `wait_secs` above zero, blocks until a new
+    /// record exists or that many seconds pass, so a tailing thread costs nothing while the disk
+    /// is quiet yet still notices a stop request. Returns the records and the USN to continue from.
     pub fn read_changes(
         &self,
         journal_id: u64,
         from: i64,
-        wait: bool,
+        wait_secs: u64,
     ) -> io::Result<(Vec<Record>, i64)> {
         let input = READ_USN_JOURNAL_DATA_V0 {
             StartUsn: from,
             ReasonMask: ALL_REASONS,
             ReturnOnlyOnClose: 0,
-            Timeout: 0,
-            BytesToWaitFor: u64::from(wait),
+            Timeout: wait_secs,
+            BytesToWaitFor: u64::from(wait_secs > 0),
             UsnJournalID: journal_id,
         };
         let mut buf = vec![0u8; BUFFER_BYTES];
@@ -167,6 +167,11 @@ impl Volume {
         }
         Ok(returned as usize)
     }
+}
+
+/// windows-rs turns its errors into io::Error with the HRESULT as the OS code, not the Win32 one.
+fn is_end_of_enumeration(e: &io::Error) -> bool {
+    e.raw_os_error() == Some(ERROR_HANDLE_EOF.to_hresult().0)
 }
 
 /// Both FSCTLs return the next cursor (an 8-byte USN or file reference) followed by records.
@@ -302,6 +307,17 @@ mod tests {
         assert_eq!(next, 4242);
         assert_eq!(records.count(), 1);
         assert!(split_output(&[1, 2, 3]).is_none());
+    }
+
+    #[test]
+    fn recognises_the_end_of_enumeration_as_it_arrives() {
+        let eof: io::Error = windows::core::Error::from(ERROR_HANDLE_EOF.to_hresult()).into();
+        assert!(is_end_of_enumeration(&eof));
+        let denied: io::Error = windows::core::Error::from(
+            windows::Win32::Foundation::ERROR_ACCESS_DENIED.to_hresult(),
+        )
+        .into();
+        assert!(!is_end_of_enumeration(&denied));
     }
 
     #[test]

@@ -1,6 +1,8 @@
 # Installs the release build for daily use: copies it to %LOCALAPPDATA%\Programs\Seekr, starts it
-# hidden at login, and asks Windows to run it on the power-saving GPU. -Uninstall undoes all three
-# and keeps your data (%LOCALAPPDATA%\Seekr, %APPDATA%\Seekr). -NoBuild reuses target\release.
+# hidden at login, and asks Windows to run it on the power-saving GPU. It also installs the
+# SeekrIndex service (C:\Program Files\Seekr, one UAC prompt) that feeds whole-drive file search.
+# -Uninstall undoes all of it and keeps your data (%LOCALAPPDATA%\Seekr, %APPDATA%\Seekr).
+# -NoBuild reuses target\release.
 param([switch]$Uninstall, [switch]$NoBuild)
 $ErrorActionPreference = 'Stop'
 
@@ -15,7 +17,15 @@ $gpu = 'HKCU:\Software\Microsoft\DirectX\UserGpuPreferences'
 Get-Process seekr -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 500
 
+# Runs seekr-svc elevated (the UAC prompt) and fails if it does.
+function Invoke-Service($svcExe, $verb) {
+    $p = Start-Process $svcExe -ArgumentList $verb -Verb RunAs -Wait -PassThru -WindowStyle Hidden
+    if ($p.ExitCode -ne 0) { throw "seekr-svc $verb failed (exit $($p.ExitCode))" }
+}
+
 if ($Uninstall) {
+    $installedSvc = Join-Path $env:ProgramFiles 'Seekr\seekr-svc.exe'
+    if (Get-Service SeekrIndex -ErrorAction SilentlyContinue) { Invoke-Service $installedSvc 'uninstall' }
     Remove-ItemProperty $run -Name Seekr -ErrorAction SilentlyContinue
     Remove-ItemProperty $approved -Name Seekr -ErrorAction SilentlyContinue
     Remove-ItemProperty $gpu -Name $exe -ErrorAction SilentlyContinue
@@ -29,8 +39,13 @@ if (-not $NoBuild) {
     try {
         npm run tauri build -- --no-bundle
         if ($LASTEXITCODE -ne 0) { throw "release build failed (exit $LASTEXITCODE)" }
+        cargo build --release -p service
+        if ($LASTEXITCODE -ne 0) { throw "service build failed (exit $LASTEXITCODE)" }
     } finally { Pop-Location }
 }
+
+# seekr-svc copies itself to C:\Program Files\Seekr and (re)starts the service.
+Invoke-Service (Join-Path $root 'target\release\seekr-svc.exe') 'install'
 
 New-Item -ItemType Directory -Force $dest | Out-Null
 Copy-Item (Join-Path $root 'target\release\seekr.exe') $exe -Force
@@ -46,4 +61,4 @@ if (-not (Test-Path $gpu)) { New-Item $gpu | Out-Null }
 Set-ItemProperty $gpu -Name $exe -Value 'GpuPreference=1;'
 
 Start-Process $exe -ArgumentList '--hidden'
-Write-Host "Seekr installed to $exe, starts at login, power-saving GPU. Press Alt+Space."
+Write-Host "Seekr installed to $exe with the SeekrIndex service; starts at login. Press Alt+Space."

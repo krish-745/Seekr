@@ -6,7 +6,7 @@ A fast keyboard launcher for Windows: apps, files, file contents and meaning, pl
 
 ## Install
 
-Build and install for daily use (copies to `%LOCALAPPDATA%\Programs\Seekr`, starts hidden at login, power-saving GPU):
+Build and install for daily use. This copies the app to `%LOCALAPPDATA%\Programs\Seekr` (starts hidden at login, power-saving GPU) and installs the SeekrIndex service to `C:\Program Files\Seekr`, which asks for one UAC approval:
 
 ```powershell
 scripts\install.ps1             # build, install, start

@@ -19,6 +19,7 @@ try {
         Step 'tsc' { npm run typecheck }
         Step 'vitest' { npm test }
         Step 'release build' { npm run tauri build -- --no-bundle }
+        Step 'service release build' { cargo build --release -p service }
     } finally { Pop-Location }
     Write-Host 'All checks passed.' -ForegroundColor Green
 } finally { Pop-Location }
