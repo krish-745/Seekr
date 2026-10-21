@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Faster file search on short queries: a 4-byte letter mask per name (rebuilt at load) and a byte-level check skip names that can't match before nucleo scores them, and large sets are ranked with a quick score whose best 300 nucleo re-scores. Full scans of 2 million names for two or three letters dropped from 12–19 ms to 9–10 ms; file results while typing are p95 29.3 ms. File search also starts before apps are ranked, and journal changes no longer reset the typing cache.
 - Previews for files and folders: highlighted code and text (UTF-8 or UTF-16, first 64 KB), Markdown (raw HTML is dropped and links don't navigate), the text of Word, PowerPoint and Excel files, folder listings, and shell thumbnails for images, video and PDFs where Windows has a thumbnail handler. Cloud-only files are never read, so previewing doesn't download them. PDF text needs pdfium, which comes later.
 - File actions: Open with…, Copy file (pastes into Explorer as a copy), Copy path, Open in Terminal (Windows Terminal, or PowerShell), Properties, and Move to Recycle Bin, which asks for a second Enter first.
 - Alt+F4 or a close message on the panel hides it instead of quitting Seekr; Quit is in the tray and in Seekr's commands.

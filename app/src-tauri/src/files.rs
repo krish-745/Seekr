@@ -60,14 +60,19 @@ const WORK_FOLDERS: [&str; 3] = [r"\desktop", r"\documents", r"\downloads"];
 /// Narrowing levels kept while typing; a 16-character query rarely needs more.
 const MAX_LEVELS: usize = 16;
 
-/// The index generation they belong to, and (name pattern, filter, every entry it matched on
-/// each drive), each extending the one before.
-type Levels = (u64, Vec<(String, Filter, BTreeMap<char, Vec<u32>>)>);
+/// The index generation they belong to, and (name pattern, filter, per drive: every entry it
+/// matched and how many entries the index had), each extending the one before.
+type Levels = (
+    u64,
+    Vec<(String, Filter, BTreeMap<char, (Vec<u32>, usize)>)>,
+);
 
 #[derive(Default)]
 pub struct Files {
     drives: RwLock<BTreeMap<char, Index>>,
-    /// Bumped on every change to `drives`, which invalidates `levels`.
+    /// Bumped when a drive's index is replaced or its sizes and dates are filled, which
+    /// invalidates `levels`. Journal and watcher changes don't bump it: new entries are appended,
+    /// and a level also searches every entry added after it was made.
     generation: AtomicU64,
     levels: Mutex<Levels>,
 }
@@ -173,7 +178,6 @@ fn follow(app: &AppHandle, files: &Files) -> io::Result<()> {
                 if let Some(index) = files.drives.write().unwrap().get_mut(&SERVICE_DRIVE) {
                     records.iter().for_each(|r| index.apply(r));
                     index.usn = next_usn;
-                    files.generation.fetch_add(1, Ordering::SeqCst);
                     dirty = true;
                 }
                 restat(files, SERVICE_DRIVE, &records);
@@ -323,7 +327,6 @@ fn fallback(files: &Files, drive: char) -> io::Result<()> {
                         index.set_stat(frn, size, modified);
                     }
                 }
-                files.generation.fetch_add(1, Ordering::SeqCst);
                 dirty = true;
             }
             if dirty && saved_at.elapsed() > SAVE_EVERY {
@@ -435,10 +438,17 @@ fn narrowed_search(
         let Some(on_drive) = filter.on_drive(drive) else {
             continue;
         };
-        let narrowed = within.and_then(|w| w.get(&drive)).map(Vec::as_slice);
-        let matches = index.search_filtered(query, narrowed, CANDIDATES, &on_drive, cancelled)?;
+        // shortcut: an entry renamed into a match, or whose new size or date now passes the
+        // filter, shows up at the next query that doesn't narrow; track touched entries if that
+        // ever matters.
+        let narrowed: Option<Vec<u32>> = within.and_then(|w| w.get(&drive)).map(|(all, len)| {
+            let added = *len as u32..index.slots() as u32;
+            all.iter().copied().chain(added).collect()
+        });
+        let matches =
+            index.search_filtered(query, narrowed.as_deref(), CANDIDATES, &on_drive, cancelled)?;
         top.extend(matches.top.into_iter().map(|hit| (drive, hit)));
-        all.insert(drive, matches.all);
+        all.insert(drive, (matches.all, index.slots()));
     }
     let repeated = levels
         .1

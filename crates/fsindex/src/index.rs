@@ -51,6 +51,9 @@ pub struct Index {
     sizes: Vec<u64>,
     /// Last write, in seconds since 2000 (0 = unknown); four bytes instead of eight per entry.
     times: Vec<u32>,
+    /// Which letters and digits each name holds (`letters`), so most names can be skipped with
+    /// one AND; rebuilt on load rather than stored.
+    masks: Vec<u32>,
     by_frn: HashMap<u64, u32>,
 }
 
@@ -62,6 +65,81 @@ struct Scoring<'a> {
     prepared: Option<&'a Prepared<'a>>,
     /// No name to match: newest first.
     by_recency: bool,
+    prefilter: Option<Prefilter>,
+    /// A large set with a prefilter: rank with `Prefilter::quick_score`, then let nucleo
+    /// re-score the best `limit`.
+    quick: bool,
+}
+
+/// A byte-level check that skips names which can't match a plain ASCII query before nucleo
+/// converts and scores them; most names fail it. Non-ASCII names always pass, since nucleo
+/// folds accents (é matches e) and Unicode case.
+struct Prefilter {
+    /// The lower-case query.
+    needle: Vec<u8>,
+    /// `letters` of the needle: a name lacking any of them can't match.
+    mask: u32,
+    /// Substring for one or two letters, otherwise the letters in order (fuzzy).
+    substring: bool,
+}
+
+impl Prefilter {
+    /// A quick stand-in for nucleo's score on an ASCII name, or None if it doesn't match: points
+    /// for letters at the start of the name or of a word, and for letters in a row. Only used to
+    /// pick the best few of a large set, which nucleo then scores properly.
+    fn quick_score(&self, name: &[u8]) -> Option<u32> {
+        let at_word = |pos: usize| {
+            pos == 0
+                || !name[pos - 1].is_ascii_alphanumeric()
+                || (name[pos - 1].is_ascii_lowercase() && name[pos].is_ascii_uppercase())
+        };
+        let bonus = |pos: usize| match pos {
+            0 => 8,
+            p if at_word(p) => 6,
+            _ => 0,
+        };
+        if self.substring {
+            let pos = find_ignore_case(name, &self.needle)?;
+            return Some(16 * self.needle.len() as u32 + bonus(pos));
+        }
+        let mut score = 0u32;
+        let mut want = 0;
+        let mut last = None;
+        for (pos, &b) in name.iter().enumerate() {
+            if b.to_ascii_lowercase() != self.needle[want] {
+                continue;
+            }
+            score += 16 + bonus(pos);
+            if last == Some(pos.wrapping_sub(1)) {
+                score += 4;
+            }
+            last = Some(pos);
+            want += 1;
+            if want == self.needle.len() {
+                return Some(score);
+            }
+        }
+        None
+    }
+
+    fn may_match(&self, name: &[u8]) -> bool {
+        if self.substring {
+            return !name.is_ascii() || find_ignore_case(name, &self.needle).is_some();
+        }
+        let mut want = self.needle.iter().peekable();
+        for &b in name {
+            if b >= 0x80 {
+                return true;
+            }
+            if want.peek() == Some(&&b.to_ascii_lowercase()) {
+                want.next();
+                if want.peek().is_none() {
+                    return true;
+                }
+            }
+        }
+        want.peek().is_none()
+    }
 }
 
 /// A filter with its `in:` terms resolved to folder marks, one Vec per term.
@@ -130,6 +208,7 @@ impl Index {
                 self.parents[i] = parent;
                 self.name_starts[i] = self.names.len() as u32;
                 self.name_lens[i] = r.name.len() as u16;
+                self.masks[i] = letters(r.name.as_bytes());
                 self.names.extend_from_slice(r.name.as_bytes());
             }
             None => self.push(r, parent),
@@ -203,6 +282,7 @@ impl Index {
             .push(r.name.len().min(u16::MAX as usize) as u16);
         self.sizes.push(UNKNOWN_SIZE);
         self.times.push(0);
+        self.masks.push(letters(r.name.as_bytes()));
         self.names.extend_from_slice(r.name.as_bytes());
         self.by_frn.insert(r.frn, i);
     }
@@ -213,6 +293,11 @@ impl Index {
 
     pub fn contains(&self, frn: u64) -> bool {
         self.by_frn.contains_key(&frn)
+    }
+
+    /// Entry numbers in use, deleted ones included; new entries are numbered from here.
+    pub fn slots(&self) -> usize {
+        self.frns.len()
     }
 
     pub fn entry(&self, frn: u64) -> Option<u32> {
@@ -254,11 +339,15 @@ impl Index {
     }
 
     pub fn name(&self, entry: u32) -> &str {
+        // Only whole `&str`s are ever appended to the arena.
+        std::str::from_utf8(self.name_bytes(entry)).unwrap_or("")
+    }
+
+    /// The name without UTF-8 validation, for byte-level checks on every entry.
+    fn name_bytes(&self, entry: u32) -> &[u8] {
         let i = entry as usize;
         let start = self.name_starts[i] as usize;
-        let bytes = &self.names[start..start + self.name_lens[i] as usize];
-        // Only whole `&str`s are ever appended to the arena.
-        std::str::from_utf8(bytes).unwrap_or("")
+        &self.names[start..start + self.name_lens[i] as usize]
     }
 
     pub fn is_dir(&self, entry: u32) -> bool {
@@ -329,11 +418,22 @@ impl Index {
             .then(|| query.trim().to_lowercase());
         let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
         let chunk = candidates.len().div_ceil(threads).max(1);
+        let prefilter = (!by_recency && one_word && query.trim().is_ascii()).then(|| {
+            let needle = query.trim().to_ascii_lowercase().into_bytes();
+            Prefilter {
+                mask: letters(&needle),
+                needle,
+                substring: uses_substring(query),
+            }
+        });
+        let quick = prefilter.is_some() && candidates.len() > GREEDY_ABOVE;
         let scoring = Scoring {
             pattern: &pattern,
             greedy: greedy.as_deref(),
             prepared,
             by_recency,
+            prefilter,
+            quick,
         };
         let parts: Vec<Option<(TopK, Vec<u32>)>> = std::thread::scope(|s| {
             let workers: Vec<_> = candidates
@@ -361,7 +461,7 @@ impl Index {
         };
         best.sort_unstable_by(order);
         best.truncate(limit);
-        if greedy.is_some() {
+        if greedy.is_some() || quick {
             let mut matcher = matcher();
             let mut buf = Vec::new();
             for hit in &mut best {
@@ -405,14 +505,29 @@ impl Index {
             let i = entry as usize;
             if self.flags[i] & DELETED != 0
                 || scoring.prepared.is_some_and(|p| !self.accepts(p, entry))
+                // Quick scoring scans the name anyway, so then only the mask is checked here.
+                || scoring.prefilter.as_ref().is_some_and(|p| {
+                    self.masks[i] & p.mask != p.mask
+                        || (!scoring.quick && !p.may_match(self.name_bytes(entry)))
+                })
             {
                 continue;
             }
-            let name = Utf32Str::new(self.name(entry), &mut buf);
-            let score = match needle {
-                _ if scoring.by_recency => Some(self.times[i]),
-                Some(needle) => matcher.fuzzy_match_greedy(name, needle).map(u32::from),
-                None => scoring.pattern.score(name, &mut matcher),
+            let bytes = self.name_bytes(entry);
+            let quick = scoring
+                .prefilter
+                .as_ref()
+                .filter(|_| scoring.quick && bytes.is_ascii());
+            let score = if scoring.by_recency {
+                Some(self.times[i])
+            } else if let Some(p) = quick {
+                p.quick_score(bytes)
+            } else {
+                let name = Utf32Str::new(self.name(entry), &mut buf);
+                match needle {
+                    Some(needle) => matcher.fuzzy_match_greedy(name, needle).map(u32::from),
+                    None => scoring.pattern.score(name, &mut matcher),
+                }
             };
             let Some(score) = score else {
                 continue;
@@ -602,6 +717,11 @@ impl Index {
             .enumerate()
             .map(|(i, &f)| (f, i as u32))
             .collect();
+        let masks = name_starts
+            .iter()
+            .zip(&name_lens)
+            .map(|(&start, &len)| letters(&names[start as usize..][..len as usize]))
+            .collect();
         Ok(Self {
             journal_id,
             usn,
@@ -613,9 +733,35 @@ impl Index {
             names,
             sizes,
             times,
+            masks,
             by_frn,
         })
     }
+}
+
+/// Where the lower-case ASCII `needle` first occurs in `name`, ignoring ASCII case. Checking
+/// the first byte before the rest is several times faster than comparing every window.
+fn find_ignore_case(name: &[u8], needle: &[u8]) -> Option<usize> {
+    let first = *needle.first()?;
+    (0..=name.len().checked_sub(needle.len())?).find(|&i| {
+        name[i].to_ascii_lowercase() == first
+            && name[i..i + needle.len()].eq_ignore_ascii_case(needle)
+    })
+}
+
+/// A bit per letter a-z, and six buckets for digits, that occur in `name` in either case. A
+/// non-ASCII name gets every bit, since nucleo may match its accented letters to plain ones.
+fn letters(name: &[u8]) -> u32 {
+    if !name.is_ascii() {
+        return u32::MAX;
+    }
+    name.iter().fold(0, |mask, &b| {
+        mask | match b.to_ascii_lowercase() {
+            c @ b'a'..=b'z' => 1 << (c - b'a'),
+            c @ b'0'..=b'9' => 1 << (26 + (c - b'0') % 6),
+            _ => 0,
+        }
+    })
 }
 
 /// Whether `name` contains the lower-case `term`, ignoring case; ASCII names skip allocating.
@@ -886,6 +1032,76 @@ mod tests {
     }
 
     #[test]
+    fn prefilter_never_rejects_a_match() {
+        let fuzzy = Prefilter {
+            needle: b"rpt".to_vec(),
+            mask: letters(b"rpt"),
+            substring: false,
+        };
+        assert!(fuzzy.may_match(b"RePorT.pdf") && !fuzzy.may_match(b"tpr.txt"));
+        assert!(
+            fuzzy.may_match("résumé".as_bytes()),
+            "accents are nucleo's call"
+        );
+        let sub = Prefilter {
+            needle: b"re".to_vec(),
+            mask: letters(b"re"),
+            substring: true,
+        };
+        assert!(sub.may_match(b"ReadMe") && !sub.may_match(b"Users"));
+        // Whatever nucleo matches, the prefilter lets through.
+        let names = [
+            "Report.PDF",
+            "users",
+            "r_e_p",
+            "Ärger.txt",
+            "prep",
+            "REP",
+            "ŕep",
+        ];
+        let mut matcher = matcher();
+        let mut buf = Vec::new();
+        for query in ["re", "rep", "rg", "p", "ep"] {
+            let substring = uses_substring(query);
+            let pattern = if substring {
+                Pattern::new(
+                    query,
+                    CaseMatching::Ignore,
+                    Normalization::Smart,
+                    AtomKind::Substring,
+                )
+            } else {
+                Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart)
+            };
+            let pre = Prefilter {
+                needle: query.as_bytes().to_vec(),
+                mask: letters(query.as_bytes()),
+                substring,
+            };
+            for name in names {
+                if pattern
+                    .score(Utf32Str::new(name, &mut buf), &mut matcher)
+                    .is_some()
+                {
+                    let passes = letters(name.as_bytes()) & pre.mask == pre.mask
+                        && pre.may_match(name.as_bytes());
+                    assert!(passes, "{query} {name}");
+                }
+                if name.is_ascii() {
+                    let nucleo = pattern
+                        .score(Utf32Str::new(name, &mut buf), &mut matcher)
+                        .is_some();
+                    assert_eq!(
+                        pre.quick_score(name.as_bytes()).is_some(),
+                        nucleo,
+                        "{query} {name}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn cancellation_stops_the_search() {
         let index = sample();
         assert!(index.search("rep", None, 10, &|| true).is_none());
@@ -941,6 +1157,18 @@ fn real_index_timings() {
             println!("{q:>12}: {:>8} matches in {:?}", m.all.len(), t.elapsed());
             levels.push((q, m.all));
         }
+    }
+    // What the app does at the second and third letter: a full scan.
+    for query in [
+        "zqxj", "zq", "in", "inv", "re", "rea", "sc", "scr", "con", "py",
+    ] {
+        let t = std::time::Instant::now();
+        let m = index.search(query, None, 300, &never).unwrap();
+        println!(
+            "{query:>12}: {:>8} matches in {:?} (full)",
+            m.all.len(),
+            t.elapsed()
+        );
     }
     for query in [
         "ext:pdf",

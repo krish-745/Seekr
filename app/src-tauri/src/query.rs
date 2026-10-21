@@ -71,6 +71,14 @@ pub async fn query(
 ) -> Result<(), String> {
     engine.begin(id);
     let parsed = filter::parse(&text);
+    // File names take milliseconds across all cores, so they start first, run while apps are
+    // ranked, and follow as a second batch.
+    let searcher = app.clone();
+    let (file_text, file_query) = (text.clone(), parsed.clone());
+    let files = tauri::async_runtime::spawn_blocking(move || {
+        let engine = searcher.state::<Engine>();
+        files::search(&searcher, &file_text, &file_query, &|| !engine.is_current(id))
+    });
     // A typed path or URL is what the user meant, so it leads, unranked.
     let mut items = direct::items(&text);
     // Apps and Seekr's own commands are fast, so they are ranked together into the first batch;
@@ -94,14 +102,7 @@ pub async fn query(
     on_batch
         .send(Batch { id, items, chips })
         .map_err(|e| e.to_string())?;
-    // File names take milliseconds across all cores, so they follow as a second batch.
-    let searcher = app.clone();
-    let files = tauri::async_runtime::spawn_blocking(move || {
-        let engine = searcher.state::<Engine>();
-        files::search(&searcher, &text, &parsed, &|| !engine.is_current(id))
-    })
-    .await
-    .map_err(|e| e.to_string())?;
+    let files = files.await.map_err(|e| e.to_string())?;
     if let Some(items) = files.filter(|items| !items.is_empty() && engine.is_current(id)) {
         let chips = Vec::new();
         on_batch
