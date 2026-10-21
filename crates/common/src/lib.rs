@@ -1,5 +1,7 @@
 //! Shared paths, config and logging for all Seekr processes.
 
+pub mod content;
+
 use std::{
     error::Error,
     fs,

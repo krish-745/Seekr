@@ -7,7 +7,7 @@ use tauri_plugin_opener::OpenerExt;
 use windows::Win32::Foundation::HWND;
 
 use crate::{
-    clipboard, fileops,
+    clipboard, content, fileops,
     query::{Action, Item},
 };
 
@@ -46,6 +46,10 @@ const TERMINAL: Action = Action {
 const PROPERTIES: Action = Action {
     id: "properties",
     label: "Properties",
+};
+const ADD_CONTENT: Action = Action {
+    id: "addcontent",
+    label: "Add to content search",
 };
 /// The panel asks before running this one.
 const RECYCLE: Action = Action {
@@ -90,6 +94,7 @@ pub fn path_item(path: String, title: String, subtitle: String, is_dir: bool) ->
             COPY_FOLDER,
             COPY_PATH,
             TERMINAL,
+            ADD_CONTENT,
             PROPERTIES,
             RECYCLE,
         ]
@@ -119,6 +124,7 @@ pub fn run(app: &AppHandle, item: &str, action: &str, owner: HWND) -> Result<(),
         (Some(("path", path)), "terminal") => return fileops::terminal(path),
         (Some(("path", path)), "properties") => return fileops::properties(path),
         (Some(("path", path)), "recycle") => return fileops::recycle(path),
+        (Some(("path", path)), "addcontent") => return content::add(path),
         (Some((_, text)), "copy") => return clipboard::set_text(owner, text),
         _ => return Err(format!("unknown action {action} on {item}")),
     };

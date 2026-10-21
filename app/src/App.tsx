@@ -9,6 +9,7 @@ import {
   type Chip,
   type Item,
   type Preview,
+  type Setup,
   type Shown,
 } from "./results";
 import "./App.css";
@@ -31,6 +32,47 @@ function App() {
   const [confirming, setConfirming] = createSignal<Item | undefined>();
 
   const current = () => items()[selected()];
+  // The content-search folder picker, shown on first run and from its command.
+  const [setup, setSetup] = createSignal<Setup>();
+  const [setupIndex, setSetupIndex] = createSignal(0);
+  let firstRun = false;
+  let askedSetup = false;
+
+  async function openSetup(first: boolean) {
+    firstRun = first;
+    setActionsOpen(false);
+    setSetupIndex(0);
+    setSetup(await invoke<Setup>("content_setup"));
+  }
+
+  function toggleFolder(index: number) {
+    setSetup((s) => s && { ...s, folders: s.folders.map((f, i) => (i === index ? { ...f, checked: !f.checked } : f)) });
+  }
+
+  async function addFolder() {
+    const path = await invoke<string | null>("choose_folder");
+    if (!path) return;
+    setSetup((s) => {
+      if (!s) return s;
+      const at = s.folders.findIndex((f) => f.path.toLowerCase() === path.toLowerCase());
+      const folders =
+        at >= 0 ? s.folders.map((f, i) => (i === at ? { ...f, checked: true } : f)) : [...s.folders, { path, checked: true }];
+      setSetupIndex(at >= 0 ? at : folders.length - 1);
+      return { ...s, folders };
+    });
+  }
+
+  /** Enter saves the ticked folders. Esc keeps what was saved before, or on first run records
+   * that none were chosen, so the picker doesn't come back uninvited. */
+  function closeSetup(save: boolean) {
+    const s = setup();
+    setSetup(undefined);
+    if (s && (save || firstRun)) {
+      const paths = save ? s.folders.filter((f) => f.checked).map((f) => f.path) : [];
+      invoke("save_content_folders", { paths });
+    }
+    input.focus();
+  }
   const [preview, setPreview] = createSignal<Preview | undefined>();
   const previewOf = <K extends Preview["kind"]>(kind: K) => {
     const p = preview();
@@ -119,6 +161,10 @@ function App() {
 
   function run(item: Item | undefined, actionId: string | undefined) {
     if (!item || !actionId) return;
+    if (actionId === "setup") {
+      openSetup(false);
+      return;
+    }
     if (actionId === "recycle" && confirming() !== item) {
       setActionsOpen(false);
       setConfirming(item);
@@ -134,6 +180,19 @@ function App() {
   }
 
   function onKey(e: KeyboardEvent) {
+    const picker = setup();
+    if (picker) {
+      const last = picker.folders.length - 1;
+      if (e.key === "ArrowDown") setSetupIndex((i) => Math.min(i + 1, last));
+      else if (e.key === "ArrowUp") setSetupIndex((i) => Math.max(i - 1, 0));
+      else if (e.key === " ") toggleFolder(setupIndex());
+      else if (e.ctrlKey && e.key === "o") addFolder();
+      else if (e.key === "Enter") closeSetup(true);
+      else if (e.key === "Escape") closeSetup(false);
+      else return;
+      e.preventDefault();
+      return;
+    }
     const actions = current()?.actions ?? [];
     const pending = confirming();
     if (pending) {
@@ -172,6 +231,12 @@ function App() {
       input.focus();
       input.select();
       invoke("panel_ready");
+      if (!askedSetup) {
+        askedSetup = true;
+        invoke<boolean>("content_setup_needed").then((needed) => {
+          if (needed) openSetup(true);
+        });
+      }
     });
     window.addEventListener("keydown", onKey);
     new ResizeObserver(() => setViewport(list.clientHeight)).observe(list);
@@ -185,15 +250,46 @@ function App() {
 
   return (
     <main class="panel">
+      <Show when={setup()}>
+        {(s) => (
+          <section class="setup">
+            <h2>Content search</h2>
+            <p class="subtitle">
+              Seekr can search inside the files in folders you choose, by words and by meaning. Nothing is read until you
+              tick a folder.
+            </p>
+            <ul class="folders">
+              <For each={s().folders}>
+                {(f, i) => (
+                  <li
+                    classList={{ selected: i() === setupIndex() }}
+                    onClick={() => {
+                      setSetupIndex(i());
+                      toggleFolder(i());
+                    }}
+                  >
+                    <input type="checkbox" checked={f.checked} tabIndex={-1} />
+                    <span>{f.path}</span>
+                  </li>
+                )}
+              </For>
+            </ul>
+            <Show when={s().notes}>
+              {(notes) => <p class="subtitle">Always included: your notes in {notes()}</p>}
+            </Show>
+          </section>
+        )}
+      </Show>
       <input
         ref={input}
+        classList={{ hidden: !!setup() }}
         class="query"
         placeholder="Search apps, files and more"
         spellcheck={false}
         autofocus
         onInput={(e) => search(e.currentTarget.value)}
       />
-      <Show when={chips().length > 0}>
+      <Show when={!setup() && chips().length > 0}>
         <div class="chips">
           <For each={chips()}>
             {(chip) => (
@@ -204,7 +300,7 @@ function App() {
           </For>
         </div>
       </Show>
-      <div class="body">
+      <div class="body" classList={{ hidden: !!setup() }}>
         <div class="results" ref={list} onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}>
           <div class="rows" style={{ height: `${items().length * ROW}px` }}>
             <For each={rows()}>
@@ -300,23 +396,35 @@ function App() {
       </div>
       <footer class="hints">
         <Show
-          when={confirming()}
+          when={!setup()}
           fallback={
             <>
-              <Show when={current()?.actions[0]}>{(a) => <span><kbd>↵</kbd> {a().label}</span>}</Show>
-              <Show when={current()?.actions[1]}>{(a) => <span><kbd>Ctrl+↵</kbd> {a().label}</span>}</Show>
-              <Show when={(current()?.actions.length ?? 0) > 0}>
-                <span><kbd>Tab</kbd> Actions</span>
-              </Show>
-              <span><kbd>Esc</kbd> {actionsOpen() ? "Back" : "Close"}</span>
+              <span><kbd>Space</kbd> Tick</span>
+              <span><kbd>Ctrl+O</kbd> Add folder</span>
+              <span><kbd>↵</kbd> Save</span>
+              <span><kbd>Esc</kbd> {firstRun ? "Not now" : "Cancel"}</span>
             </>
           }
         >
-          {(item) => (
-            <span class="confirm">
-              <kbd>↵</kbd> Move {item().title} to the Recycle Bin · any other key cancels
-            </span>
-          )}
+          <Show
+            when={confirming()}
+            fallback={
+              <>
+                <Show when={current()?.actions[0]}>{(a) => <span><kbd>↵</kbd> {a().label}</span>}</Show>
+                <Show when={current()?.actions[1]}>{(a) => <span><kbd>Ctrl+↵</kbd> {a().label}</span>}</Show>
+                <Show when={(current()?.actions.length ?? 0) > 0}>
+                  <span><kbd>Tab</kbd> Actions</span>
+                </Show>
+                <span><kbd>Esc</kbd> {actionsOpen() ? "Back" : "Close"}</span>
+              </>
+            }
+          >
+            {(item) => (
+              <span class="confirm">
+                <kbd>↵</kbd> Move {item().title} to the Recycle Bin · any other key cancels
+              </span>
+            )}
+          </Show>
         </Show>
       </footer>
     </main>

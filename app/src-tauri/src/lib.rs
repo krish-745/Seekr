@@ -1,6 +1,7 @@
 mod apps;
 mod builtin;
 mod clipboard;
+mod content;
 mod direct;
 mod fileops;
 mod files;
@@ -81,7 +82,7 @@ pub(crate) fn panel_hwnd(app: &AppHandle) -> Option<windows::Win32::Foundation::
     Some(windows::Win32::Foundation::HWND(hwnd.0))
 }
 
-fn show(app: &AppHandle) {
+pub(crate) fn show(app: &AppHandle) {
     log_err("show", try_show(app));
 }
 
@@ -311,6 +312,10 @@ pub fn run() {
             query::run_action,
             query::toggle_pin,
             preview::preview,
+            content::content_setup_needed,
+            content::content_setup,
+            content::save_content_folders,
+            content::choose_folder,
             telemetry::panel_ready,
             telemetry::record_latency,
         ])

@@ -19,6 +19,11 @@ const QUIT: Action = Action {
     id: "quit",
     label: "Quit",
 };
+/// The panel opens its folder picker for this one; Rust never sees it.
+const SETUP: Action = Action {
+    id: "setup",
+    label: "Choose folders",
+};
 
 const CONFIG_TEMPLATE: &str = "\
 # Seekr settings. Every key is optional; changes apply after restarting Seekr.
@@ -52,6 +57,14 @@ pub fn all() -> Vec<Item> {
             preview: format!("Daily logs, latency summaries and panic reports live in {logs}."),
             icon: None,
             actions: vec![OPEN],
+        },
+        Item {
+            id: "seekr:content".into(),
+            title: "Choose content search folders".into(),
+            subtitle: "Folders Seekr searches inside".into(),
+            preview: "Pick the folders whose files Seekr reads for content and meaning search. Your notes folder is always included.".into(),
+            icon: None,
+            actions: vec![SETUP],
         },
         Item {
             id: "seekr:quit".into(),

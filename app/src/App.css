@@ -276,3 +276,45 @@ kbd {
 .confirm {
   color: var(--danger);
 }
+
+.hidden {
+  display: none;
+}
+
+/* The content-search folder picker fills the panel above the hint bar. */
+.setup {
+  flex: 1;
+  min-height: 0;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.setup h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.folders {
+  margin: 16px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.folders li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+}
+
+.folders li.selected {
+  background: var(--selection);
+}
+
+.folders input {
+  margin: 0;
+  pointer-events: none;
+  accent-color: var(--accent);
+}

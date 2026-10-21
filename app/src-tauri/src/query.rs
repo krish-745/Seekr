@@ -133,7 +133,10 @@ pub fn run_action(
         _ => builtin::run(&app, &item, &action)?,
     }
     // Copying or recycling leaves nothing new on screen, so focus goes back to where it was.
-    let nothing_opened = matches!(action.as_str(), "copy" | "copyfile" | "recycle");
+    let nothing_opened = matches!(
+        action.as_str(),
+        "copy" | "copyfile" | "recycle" | "addcontent"
+    );
     crate::hide_panel(&app, nothing_opened);
     Ok(())
 }

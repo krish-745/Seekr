@@ -8,6 +8,8 @@ export type Item = {
   actions: Action[];
 };
 export type Chip = { label: string; valid: boolean };
+/** The content-search folder picker: suggestions and chosen folders, plus the notes folder. */
+export type Setup = { folders: { path: string; checked: boolean }[]; notes: string | null };
 /** What the preview pane shows for a file or folder; `code` lines are [color, text] runs. */
 export type Preview =
   | { kind: "image"; url: string }

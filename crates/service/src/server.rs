@@ -49,14 +49,7 @@ pub fn serve_user(user_sid: &str, control: &Control) -> io::Result<()> {
     let volume = Volume::open('C')?;
     let journal = volume.journal()?;
     let mut tree = Tree::new(excluded_folders(user_sid));
-    let started = std::time::Instant::now();
-    let (path, header) = write_snapshot(&volume, &journal, &mut tree, user_sid)?;
-    tracing::info!(
-        "snapshot of {} entries ({} folders tracked) in {:?}",
-        header.count,
-        tree.folders(),
-        started.elapsed()
-    );
+    let mut snapshot = fresh_snapshot(&volume, &journal, &mut tree, user_sid)?;
     while !control.should_leave(user_sid) {
         let mut pipe = security::create_pipe(PIPE_NAME, user_sid)?;
         security::accept(&pipe)?;
@@ -64,7 +57,12 @@ pub fn serve_user(user_sid: &str, control: &Control) -> io::Result<()> {
             break;
         }
         match session(
-            &mut pipe, &volume, &mut tree, &path, header, control, user_sid,
+            &mut pipe,
+            &volume,
+            &mut tree,
+            &mut snapshot,
+            control,
+            user_sid,
         ) {
             Ok(()) => {}
             Err(e) => tracing::info!("client gone: {e}"),
@@ -77,8 +75,7 @@ fn session(
     pipe: &mut fs::File,
     volume: &Volume,
     tree: &mut Tree,
-    path: &str,
-    header: Header,
+    snapshot: &mut (String, Header),
     control: &Control,
     user_sid: &str,
 ) -> io::Result<()> {
@@ -89,7 +86,13 @@ fn session(
     let mut cursor = if journal.can_resume(journal_id, usn) {
         usn
     } else {
-        let path = path.to_string();
+        // The journal keeps only so much; once it has moved past the stored snapshot, a client
+        // could never catch up from it, so take a new one.
+        if !journal.can_resume(snapshot.1.journal_id, snapshot.1.usn) {
+            *tree = Tree::new(excluded_folders(user_sid));
+            *snapshot = fresh_snapshot(volume, &journal, tree, user_sid)?;
+        }
+        let (path, header) = (snapshot.0.clone(), snapshot.1);
         wire::write_message(pipe, &Message::Snapshot { path, header })?;
         header.usn
     };
@@ -115,6 +118,23 @@ fn session(
         cursor = next;
     }
     Ok(())
+}
+
+fn fresh_snapshot(
+    volume: &Volume,
+    journal: &Journal,
+    tree: &mut Tree,
+    user_sid: &str,
+) -> io::Result<(String, Header)> {
+    let started = std::time::Instant::now();
+    let snapshot = write_snapshot(volume, journal, tree, user_sid)?;
+    tracing::info!(
+        "snapshot of {} entries ({} folders tracked) in {:?}",
+        snapshot.1.count,
+        tree.folders(),
+        started.elapsed()
+    );
+    Ok(snapshot)
 }
 
 /// shortcut: holds every record in memory while writing (about 150 MB for 2 M files, freed
