@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::Serialize;
 use tauri::{AppHandle, State, ipc::Channel};
 
-use crate::{apps, builtin, rank::Ranker};
+use crate::{apps, builtin, direct, rank::Ranker};
 
 #[derive(Clone, Serialize)]
 pub struct Action {
@@ -61,9 +61,11 @@ pub async fn query(
     engine.begin(id);
     // Apps and Seekr's own commands are fast, so they are ranked together into the first batch;
     // slower providers will append later batches.
-    let mut items = apps::all(&index);
-    items.extend(builtin::all());
-    let items = ranker.rank(&text, items);
+    let mut candidates = apps::all(&index);
+    candidates.extend(builtin::all());
+    // A typed path or URL is what the user meant, so it leads, unranked.
+    let mut items = direct::items(&text);
+    items.extend(ranker.rank(&text, candidates));
     if engine.is_current(id) {
         on_batch
             .send(Batch { id, items })
@@ -84,11 +86,14 @@ pub fn run_action(
     if let Err(e) = ranker.record(&query, &item) {
         tracing::error!("could not record use of {item}: {e}");
     }
-    match item.strip_prefix("app:") {
-        Some(id) => apps::launch(id)?,
-        None => builtin::run(&app, &item, &action)?,
+    let owner = crate::panel_hwnd(&app).ok_or("panel window is gone")?;
+    match item.split_once(':') {
+        Some(("app", id)) => apps::run(&app, id, &action, owner)?,
+        Some(("path" | "url", _)) => direct::run(&app, &item, &action, owner)?,
+        _ => builtin::run(&app, &item, &action)?,
     }
-    crate::hide_panel(&app);
+    // Copying leaves nothing new on screen, so focus goes back to where the user was.
+    crate::hide_panel(&app, action == "copy");
     Ok(())
 }
 

@@ -9,31 +9,48 @@ use std::{
 };
 
 use tauri::{AppHandle, Manager};
+use tauri_plugin_opener::OpenerExt;
 use windows::{
     Win32::{
-        Foundation::SIZE,
+        Foundation::{HWND, SIZE},
         Graphics::Gdi::{
             BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, DIB_RGB_COLORS,
             DeleteDC, DeleteObject, GetDIBits, GetObjectW, HBITMAP, HGDIOBJ,
         },
+        Storage::EnhancedStorage::PKEY_Link_TargetParsingPath,
         System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoTaskMemFree, CoUninitialize},
         UI::{
             Shell::{
-                BHID_EnumItems, FOLDERID_AppsFolder, IEnumShellItems, IShellItem,
+                BHID_EnumItems, FOLDERID_AppsFolder, IEnumShellItems, IShellItem, IShellItem2,
                 IShellItemImageFactory, KF_FLAG_DEFAULT, SHGetKnownFolderItem, SIGDN,
                 SIGDN_NORMALDISPLAY, SIGDN_PARENTRELATIVEPARSING, SIIGBF_ICONONLY, ShellExecuteW,
             },
             WindowsAndMessaging::SW_SHOWNORMAL,
         },
     },
-    core::{HSTRING, Interface, w},
+    core::{HSTRING, Interface, PCWSTR, w},
 };
 
-use crate::query::{Action, Item};
+use crate::{
+    clipboard,
+    query::{Action, Item},
+};
 
 const OPEN: Action = Action {
     id: "open",
     label: "Open",
+};
+const LOCATION: Action = Action {
+    id: "location",
+    label: "Open file location",
+};
+const ADMIN: Action = Action {
+    id: "admin",
+    label: "Run as administrator",
+};
+const COPY_PATH: Action = Action {
+    id: "copy",
+    label: "Copy path",
 };
 /// Icon edge in physical pixels: sharp at the 24 px row size up to 200% scaling.
 const ICON_PX: i32 = 48;
@@ -44,6 +61,8 @@ struct App {
     name: String,
     /// The AppsFolder parsing name: an AppUserModelID or a known-folder path.
     id: String,
+    /// The program a desktop app's shortcut points at; Store apps have none.
+    target: Option<String>,
     icon: Option<String>,
 }
 
@@ -64,9 +83,12 @@ pub fn all(index: &AppIndex) -> Vec<Item> {
             id: format!("app:{}", app.id),
             title: app.name.clone(),
             subtitle: "Application".into(),
-            preview: app.id.clone(),
+            preview: app.target.clone().unwrap_or_else(|| app.id.clone()),
             icon: app.icon.clone(),
-            actions: vec![OPEN],
+            actions: match app.target {
+                Some(_) => vec![OPEN, LOCATION, ADMIN, COPY_PATH],
+                None => vec![OPEN],
+            },
         })
         .collect()
 }
@@ -94,9 +116,30 @@ pub fn refresh(app: &AppHandle) {
     });
 }
 
-pub fn launch(id: &str) -> Result<(), String> {
+pub fn run(app: &AppHandle, id: &str, action: &str, owner: HWND) -> Result<(), String> {
+    let target = || {
+        let index = app.state::<AppIndex>();
+        let apps = index.apps.read().unwrap();
+        let app = apps.iter().find(|a| a.id == id);
+        app.and_then(|a| a.target.clone())
+            .ok_or_else(|| format!("{id} has no program path"))
+    };
+    match action {
+        "open" => launch(id, w!("open")),
+        // The shell shows the UAC prompt; declining it is an error we just log.
+        "admin" => launch(id, w!("runas")),
+        "location" => app
+            .opener()
+            .reveal_item_in_dir(target()?)
+            .map_err(|e| e.to_string()),
+        "copy" => clipboard::set_text(owner, &target()?),
+        _ => Err(format!("unknown action {action} on app {id}")),
+    }
+}
+
+fn launch(id: &str, verb: PCWSTR) -> Result<(), String> {
     let target = HSTRING::from(format!(r"shell:AppsFolder\{id}"));
-    let result = unsafe { ShellExecuteW(None, w!("open"), &target, None, None, SW_SHOWNORMAL) };
+    let result = unsafe { ShellExecuteW(None, verb, &target, None, None, SW_SHOWNORMAL) };
     // ShellExecute reports success as any value above 32.
     if result.0 as usize > 32 {
         Ok(())
@@ -139,7 +182,13 @@ fn scan_apps_folder(icon_dir: &Path) -> windows::core::Result<Vec<App>> {
             continue;
         };
         let icon = cached_icon(&item, &id, icon_dir);
-        apps.push(App { name, id, icon });
+        let target = target_path(&item);
+        apps.push(App {
+            name,
+            id,
+            target,
+            icon,
+        });
     }
     Ok(apps)
 }
@@ -149,6 +198,14 @@ fn display_name(item: &IShellItem, sigdn: SIGDN) -> windows::core::Result<String
     let name = unsafe { raw.to_string() };
     unsafe { CoTaskMemFree(Some(raw.0 as _)) };
     name.map_err(|_| windows::core::Error::empty())
+}
+
+fn target_path(item: &IShellItem) -> Option<String> {
+    let item: IShellItem2 = item.cast().ok()?;
+    let raw = unsafe { item.GetString(&PKEY_Link_TargetParsingPath).ok()? };
+    let path = unsafe { raw.to_string() };
+    unsafe { CoTaskMemFree(Some(raw.0 as _)) };
+    path.ok().filter(|p| !p.is_empty())
 }
 
 /// shortcut: an icon is rendered once per app id and never refreshed; delete the icons folder

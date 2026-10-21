@@ -1,5 +1,8 @@
 mod apps;
 mod builtin;
+mod clipboard;
+mod direct;
+mod focus;
 mod hotkey;
 mod query;
 mod rank;
@@ -21,10 +24,15 @@ const HIDDEN_ARG: &str = "--hidden";
 
 #[tauri::command]
 fn hide(app: AppHandle) {
-    hide_panel(&app);
+    hide_panel(&app, true);
 }
 
-pub(crate) fn hide_panel(app: &AppHandle) {
+/// `restore` hands focus back to the window used before the panel opened: right after Esc or
+/// a copy, but not after launching something, which should keep the focus it takes.
+pub(crate) fn hide_panel(app: &AppHandle, restore: bool) {
+    if restore && !app.state::<focus::Focus>().restore() {
+        tracing::warn!("focus didn't return to the previous window");
+    }
     if let Some(w) = app.get_webview_window("main") {
         log_err("hide", w.hide());
     }
@@ -32,9 +40,15 @@ pub(crate) fn hide_panel(app: &AppHandle) {
 
 pub(crate) fn toggle(app: &AppHandle) {
     match app.get_webview_window("main") {
-        Some(w) if w.is_visible().unwrap_or(false) => log_err("hide", w.hide()),
+        Some(w) if w.is_visible().unwrap_or(false) => hide_panel(app, true),
         _ => show(app),
     }
+}
+
+/// The panel's window handle, for Win32 calls that need an owner window.
+pub(crate) fn panel_hwnd(app: &AppHandle) -> Option<windows::Win32::Foundation::HWND> {
+    let hwnd = app.get_webview_window("main")?.hwnd().ok()?;
+    Some(windows::Win32::Foundation::HWND(hwnd.0))
 }
 
 fn show(app: &AppHandle) {
@@ -70,6 +84,9 @@ fn try_show(app: &AppHandle) -> tauri::Result<()> {
         w.set_size(PhysicalSize::new(width, height))?;
         w.set_position(PhysicalPosition::new(x, y))?;
         size = Some(PhysicalSize::new(width, height));
+    }
+    if let Some(panel) = panel_hwnd(app) {
+        app.state::<focus::Focus>().remember(panel);
     }
     app.state::<Telemetry>().mark_shown();
     apps::refresh(app);
@@ -200,6 +217,7 @@ pub fn run() {
         )
         .manage(query::Engine::default())
         .manage(apps::AppIndex::default())
+        .manage(focus::Focus::default())
         .register_uri_scheme_protocol("icon", |_ctx, request| {
             let name = request.uri().path().trim_start_matches('/');
             let bytes = apps::is_icon_file(name)

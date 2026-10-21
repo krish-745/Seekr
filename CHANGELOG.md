@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Desktop apps get Open file location (Ctrl+Enter), Run as administrator and Copy path; Store apps only open.
+- Typing a path (`C:\...`, `~\...`, `%WINDIR%\...`, `\server\share`) or a URL (`https://...`, `www....`) offers it as the first result, with Open, Show in folder and Copy.
+- Esc, the hotkey and copy actions give focus back to the window you were in, and check that Windows did it.
 - Ranking: fuzzy matching that favours word starts and acronyms ("vsc" finds Visual Studio Code), boosted by how often and how recently you chose a result for what you typed (14-day half-life). Results can be pinned to the top from the actions list. An empty search shows pins, then recently used results. Usage lives in `%LOCALAPPDATA%\Seekr\seekr.db`.
 - Fixed: the first time the panel opened it was a title bar's height too tall.
 - `SEEKR_DATA_DIR` overrides the data folder (logs, icons, database), for test runs.
