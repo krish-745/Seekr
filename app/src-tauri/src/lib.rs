@@ -2,6 +2,7 @@ mod apps;
 mod builtin;
 mod clipboard;
 mod direct;
+mod files;
 mod focus;
 mod hotkey;
 mod query;
@@ -246,6 +247,7 @@ pub fn run() {
         .manage(query::Engine::default())
         .manage(apps::AppIndex::default())
         .manage(focus::Focus::default())
+        .manage(files::Files::default())
         .register_uri_scheme_protocol("icon", |_ctx, request| {
             let name = request.uri().path().trim_start_matches('/');
             let bytes = apps::is_icon_file(name)
@@ -266,6 +268,7 @@ pub fn run() {
                 rank::Ranker::in_memory().expect("in-memory SQLite")
             });
             app.manage(ranker);
+            files::start(app.handle());
             register_hotkey(app.handle());
             apps::refresh(app.handle());
             build_tray(app)?;

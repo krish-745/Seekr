@@ -3,9 +3,9 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Serialize;
-use tauri::{AppHandle, State, ipc::Channel};
+use tauri::{AppHandle, Manager, State, ipc::Channel};
 
-use crate::{apps, builtin, direct, rank::Ranker};
+use crate::{apps, builtin, direct, files, rank::Ranker};
 
 #[derive(Clone, Serialize)]
 pub struct Action {
@@ -51,6 +51,7 @@ impl Engine {
 
 #[tauri::command]
 pub async fn query(
+    app: AppHandle,
     id: u64,
     text: String,
     on_batch: Channel<Batch>,
@@ -66,7 +67,21 @@ pub async fn query(
     // A typed path or URL is what the user meant, so it leads, unranked.
     let mut items = direct::items(&text);
     items.extend(ranker.rank(&text, candidates));
-    if engine.is_current(id) {
+    if !engine.is_current(id) {
+        return Ok(());
+    }
+    on_batch
+        .send(Batch { id, items })
+        .map_err(|e| e.to_string())?;
+    // File names take milliseconds across all cores, so they follow as a second batch.
+    let searcher = app.clone();
+    let files = tauri::async_runtime::spawn_blocking(move || {
+        let engine = searcher.state::<Engine>();
+        files::search(&searcher, &text, &|| !engine.is_current(id))
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    if let Some(items) = files.filter(|items| !items.is_empty() && engine.is_current(id)) {
         on_batch
             .send(Batch { id, items })
             .map_err(|e| e.to_string())?;

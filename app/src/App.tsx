@@ -37,6 +37,15 @@ function App() {
   let queue: Batch[] = [];
   let frame = 0;
   const typedAt = new Map<number, number>();
+  // Batches received per query: the first holds apps and commands, the second file names.
+  const received = new Map<number, number>();
+  let firstPainted = 0;
+  let filesArrived = 0;
+
+  function record(metric: string, t0: number) {
+    // The callback runs at the start of the next frame, after this one is painted.
+    requestAnimationFrame(() => invoke("record_latency", { metric, ms: performance.now() - t0 }));
+  }
 
   // Batches land at most once per frame, however fast providers answer.
   function flush() {
@@ -50,13 +59,16 @@ function App() {
     }
     setItems(shown.items);
     const t0 = typedAt.get(shown.id);
-    for (const id of typedAt.keys()) if (id <= shown.id) typedAt.delete(id);
-    if (t0 !== undefined) {
-      // The callback runs at the start of the next frame, after this one is painted.
-      requestAnimationFrame(() =>
-        invoke("record_latency", { metric: "keystroke", ms: performance.now() - t0 }),
-      );
+    if (t0 !== undefined && firstPainted !== shown.id) {
+      firstPainted = shown.id;
+      record("keystroke", t0);
     }
+    if (t0 !== undefined && filesArrived === shown.id) {
+      filesArrived = 0;
+      record("files", t0);
+    }
+    for (const id of typedAt.keys()) if (id < shown.id) typedAt.delete(id);
+    for (const id of received.keys()) if (id < shown.id) received.delete(id);
   }
 
   function search(text: string) {
@@ -65,6 +77,9 @@ function App() {
     typedAt.set(id, performance.now());
     const onBatch = new Channel<Batch>();
     onBatch.onmessage = (batch) => {
+      const n = (received.get(batch.id) ?? 0) + 1;
+      received.set(batch.id, n);
+      if (n === 2) filesArrived = batch.id;
       queue.push(batch);
       frame ||= requestAnimationFrame(flush);
     };

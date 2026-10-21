@@ -7,5 +7,13 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+nucleo-matcher = "0.3"
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Threading"] }
 zstd = "0.14.3"
+
+[dev-dependencies]
+criterion = "0.8.2"
+
+[[bench]]
+name = "query"
+harness = false

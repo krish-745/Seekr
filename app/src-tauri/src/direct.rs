@@ -53,14 +53,19 @@ pub fn items(text: &str) -> Vec<Item> {
             Err(_) => return Vec::new(),
         }
     };
-    vec![Item {
+    vec![path_item(path.clone(), path, kind.into())]
+}
+
+/// A file or folder result; `run` handles its actions.
+pub fn path_item(path: String, title: String, subtitle: String) -> Item {
+    Item {
         id: format!("path:{path}"),
-        title: path.clone(),
-        subtitle: kind.into(),
+        title,
+        subtitle,
         preview: path,
         icon: None,
         actions: vec![OPEN, REVEAL, COPY_PATH],
-    }]
+    }
 }
 
 pub fn run(app: &AppHandle, item: &str, action: &str, owner: HWND) -> Result<(), String> {

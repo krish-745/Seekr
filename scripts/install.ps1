@@ -2,8 +2,8 @@
 # hidden at login, and asks Windows to run it on the power-saving GPU. It also installs the
 # SeekrIndex service (C:\Program Files\Seekr, one UAC prompt) that feeds whole-drive file search.
 # -Uninstall undoes all of it and keeps your data (%LOCALAPPDATA%\Seekr, %APPDATA%\Seekr).
-# -NoBuild reuses target\release.
-param([switch]$Uninstall, [switch]$NoBuild)
+# -NoBuild reuses target\release. -SkipService updates only the app, with no UAC prompt.
+param([switch]$Uninstall, [switch]$NoBuild, [switch]$SkipService)
 $ErrorActionPreference = 'Stop'
 
 $root = Split-Path $PSScriptRoot -Parent
@@ -39,13 +39,15 @@ if (-not $NoBuild) {
     try {
         npm run tauri build -- --no-bundle
         if ($LASTEXITCODE -ne 0) { throw "release build failed (exit $LASTEXITCODE)" }
-        cargo build --release -p service
-        if ($LASTEXITCODE -ne 0) { throw "service build failed (exit $LASTEXITCODE)" }
+        if (-not $SkipService) {
+            cargo build --release -p service
+            if ($LASTEXITCODE -ne 0) { throw "service build failed (exit $LASTEXITCODE)" }
+        }
     } finally { Pop-Location }
 }
 
 # seekr-svc copies itself to C:\Program Files\Seekr and (re)starts the service.
-Invoke-Service (Join-Path $root 'target\release\seekr-svc.exe') 'install'
+if (-not $SkipService) { Invoke-Service (Join-Path $root 'target\release\seekr-svc.exe') 'install' }
 
 New-Item -ItemType Directory -Force $dest | Out-Null
 Copy-Item (Join-Path $root 'target\release\seekr.exe') $exe -Force

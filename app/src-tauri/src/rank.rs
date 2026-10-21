@@ -183,6 +183,37 @@ impl Ranker {
     }
 }
 
+/// Usage and pins for one query, for results ranked outside `rank` (files), on the same scale.
+pub struct Boosts {
+    uses: HashMap<String, f64>,
+    pins: HashMap<String, i64>,
+}
+
+impl Boosts {
+    pub fn score(&self, id: &str) -> f64 {
+        let used = self.uses.get(id).copied().unwrap_or(0.0).min(MAX_USES);
+        let pinned = if self.pins.contains_key(id) {
+            PIN_BONUS
+        } else {
+            0.0
+        };
+        POINTS_PER_USE * used + pinned
+    }
+
+    pub fn decorate(&self, item: Item) -> Item {
+        with_pin_action(item, &self.pins)
+    }
+}
+
+impl Ranker {
+    pub fn boosts(&self, query: &str) -> Boosts {
+        Boosts {
+            uses: self.uses(&normalize(query)).unwrap_or_else(log_db_error),
+            pins: self.pins().unwrap_or_else(log_db_error),
+        }
+    }
+}
+
 fn with_pin_action(mut item: Item, pins: &HashMap<String, i64>) -> Item {
     item.actions.push(if pins.contains_key(&item.id) {
         UNPIN
