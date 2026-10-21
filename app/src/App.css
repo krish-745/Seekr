@@ -5,6 +5,8 @@
   --text-muted: rgb(0 0 0 / 0.6);
   --accent: #005fb8;
   --border: rgb(0 0 0 / 0.08);
+  --selection: rgb(0 0 0 / 0.06);
+  --surface: rgb(255 255 255 / 0.7);
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
 }
 
@@ -14,6 +16,8 @@
     --text-muted: rgb(255 255 255 / 0.6);
     --accent: #60cdff;
     --border: rgb(255 255 255 / 0.08);
+    --selection: rgb(255 255 255 / 0.08);
+    --surface: rgb(40 40 40 / 0.95);
   }
 }
 
@@ -49,4 +53,123 @@ body {
 
 .query::placeholder {
   color: var(--text-muted);
+}
+
+.body {
+  position: relative;
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.results {
+  position: relative;
+  flex: 0 0 45%;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+}
+
+.rows {
+  position: relative;
+}
+
+/* Height must match ROW in App.tsx. */
+.row {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 44px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border-radius: 6px;
+  cursor: default;
+}
+
+.row.selected,
+.actions li.selected {
+  background: var(--selection);
+}
+
+.text {
+  flex: 1;
+  min-width: 0;
+}
+
+.title,
+.subtitle {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.subtitle {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.number {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.empty {
+  padding: 16px 20px;
+  color: var(--text-muted);
+}
+
+.preview {
+  flex: 1;
+  min-width: 0;
+  padding: 16px 20px;
+  overflow-y: auto;
+  user-select: text;
+}
+
+.preview h2 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.preview pre {
+  margin: 16px 0 0;
+  font: 13px/1.5 var(--font);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  position: absolute;
+  right: 12px;
+  bottom: 8px;
+  min-width: 200px;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+}
+
+.actions li {
+  padding: 8px 10px;
+  border-radius: 6px;
+}
+
+.hints {
+  display: flex;
+  gap: 16px;
+  padding: 8px 20px;
+  font-size: 12px;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+}
+
+kbd {
+  font: inherit;
 }

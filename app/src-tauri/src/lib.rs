@@ -1,4 +1,7 @@
+mod builtin;
 mod hotkey;
+mod query;
+mod telemetry;
 
 use tauri::{
     AppHandle, Manager, PhysicalPosition, PhysicalSize, WindowEvent,
@@ -7,6 +10,7 @@ use tauri::{
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+use telemetry::Telemetry;
 
 /// Panel size in logical pixels, scaled to the target monitor's DPI on every show.
 const PANEL: (f64, f64) = (760.0, 480.0);
@@ -15,6 +19,10 @@ const HIDDEN_ARG: &str = "--hidden";
 
 #[tauri::command]
 fn hide(app: AppHandle) {
+    hide_panel(&app);
+}
+
+pub(crate) fn hide_panel(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         log_err("hide", w.hide());
     }
@@ -52,6 +60,7 @@ fn try_show(app: &AppHandle) -> tauri::Result<()> {
         w.set_size(PhysicalSize::new(width, height))?;
         w.set_position(PhysicalPosition::new(x, y))?;
     }
+    app.state::<Telemetry>().mark_shown();
     w.show()?;
     w.set_focus()
 }
@@ -142,9 +151,12 @@ fn set_autostart(app: &AppHandle, item: &CheckMenuItem<tauri::Wry>) {
     } else {
         autolaunch.disable()
     };
-    if let Err(e) = result {
-        tracing::error!("start at login: {e}");
-        log_err("revert check", item.set_checked(!want));
+    match result {
+        Ok(()) => tracing::info!("start at login {}", if want { "on" } else { "off" }),
+        Err(e) => {
+            tracing::error!("start at login: {e}");
+            log_err("revert check", item.set_checked(!want));
+        }
     }
 }
 
@@ -168,6 +180,8 @@ pub fn run() {
                 })
                 .build(),
         )
+        .manage(query::Engine::default())
+        .manage(Telemetry::default())
         .setup(|app| {
             register_hotkey(app.handle());
             build_tray(app)?;
@@ -179,9 +193,16 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let WindowEvent::Focused(false) = event {
                 log_err("hide", window.hide());
+                window.state::<Telemetry>().flush();
             }
         })
-        .invoke_handler(tauri::generate_handler![hide])
+        .invoke_handler(tauri::generate_handler![
+            hide,
+            query::query,
+            query::run_action,
+            telemetry::panel_ready,
+            telemetry::record_latency,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
