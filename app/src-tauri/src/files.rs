@@ -393,7 +393,8 @@ pub fn search(
         .map(|(_, path, index, entry)| {
             let folder = path.rsplit_once('\\').map_or("", |(f, _)| f).to_string();
             let name = index.name(entry).to_string();
-            boosts.decorate(direct::path_item(path, name, folder))
+            let is_dir = index.is_dir(entry);
+            boosts.decorate(direct::path_item(path, name, folder, is_dir))
         })
         .collect();
     Some(items)

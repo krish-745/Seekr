@@ -211,3 +211,7 @@ body {
 kbd {
   font: inherit;
 }
+
+.confirm {
+  color: var(--danger);
+}

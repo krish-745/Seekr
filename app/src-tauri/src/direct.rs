@@ -7,7 +7,7 @@ use tauri_plugin_opener::OpenerExt;
 use windows::Win32::Foundation::HWND;
 
 use crate::{
-    clipboard,
+    clipboard, fileops,
     query::{Action, Item},
 };
 
@@ -26,6 +26,31 @@ const COPY_PATH: Action = Action {
 const COPY_URL: Action = Action {
     id: "copy",
     label: "Copy URL",
+};
+const OPEN_WITH: Action = Action {
+    id: "openwith",
+    label: "Open with…",
+};
+const COPY_FILE: Action = Action {
+    id: "copyfile",
+    label: "Copy file",
+};
+const COPY_FOLDER: Action = Action {
+    id: "copyfile",
+    label: "Copy folder",
+};
+const TERMINAL: Action = Action {
+    id: "terminal",
+    label: "Open in Terminal",
+};
+const PROPERTIES: Action = Action {
+    id: "properties",
+    label: "Properties",
+};
+/// The panel asks before running this one.
+const RECYCLE: Action = Action {
+    id: "recycle",
+    label: "Move to Recycle Bin",
 };
 
 pub fn items(text: &str) -> Vec<Item> {
@@ -53,18 +78,33 @@ pub fn items(text: &str) -> Vec<Item> {
             Err(_) => return Vec::new(),
         }
     };
-    vec![path_item(path.clone(), path, kind.into())]
+    vec![path_item(path.clone(), path, kind.into(), kind != "File")]
 }
 
 /// A file or folder result; `run` handles its actions.
-pub fn path_item(path: String, title: String, subtitle: String) -> Item {
+pub fn path_item(path: String, title: String, subtitle: String, is_dir: bool) -> Item {
+    let actions = if is_dir {
+        vec![
+            OPEN,
+            REVEAL,
+            COPY_FOLDER,
+            COPY_PATH,
+            TERMINAL,
+            PROPERTIES,
+            RECYCLE,
+        ]
+    } else {
+        vec![
+            OPEN, REVEAL, OPEN_WITH, COPY_FILE, COPY_PATH, TERMINAL, PROPERTIES, RECYCLE,
+        ]
+    };
     Item {
         id: format!("path:{path}"),
         title,
         subtitle,
         preview: path,
         icon: None,
-        actions: vec![OPEN, REVEAL, COPY_PATH],
+        actions,
     }
 }
 
@@ -74,6 +114,11 @@ pub fn run(app: &AppHandle, item: &str, action: &str, owner: HWND) -> Result<(),
         (Some(("url", url)), "open") => opener.open_url(url, None::<&str>),
         (Some(("path", path)), "open") => opener.open_path(path, None::<&str>),
         (Some(("path", path)), "reveal") => opener.reveal_item_in_dir(path),
+        (Some(("path", path)), "openwith") => return fileops::open_with(path),
+        (Some(("path", path)), "copyfile") => return clipboard::set_files(owner, &[path]),
+        (Some(("path", path)), "terminal") => return fileops::terminal(path),
+        (Some(("path", path)), "properties") => return fileops::properties(path),
+        (Some(("path", path)), "recycle") => return fileops::recycle(path),
         (Some((_, text)), "copy") => return clipboard::set_text(owner, text),
         _ => return Err(format!("unknown action {action} on {item}")),
     };

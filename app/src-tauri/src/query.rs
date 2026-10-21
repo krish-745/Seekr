@@ -129,8 +129,9 @@ pub fn run_action(
         Some(("path" | "url", _)) => direct::run(&app, &item, &action, owner)?,
         _ => builtin::run(&app, &item, &action)?,
     }
-    // Copying leaves nothing new on screen, so focus goes back to where the user was.
-    crate::hide_panel(&app, action == "copy");
+    // Copying or recycling leaves nothing new on screen, so focus goes back to where it was.
+    let nothing_opened = matches!(action.as_str(), "copy" | "copyfile" | "recycle");
+    crate::hide_panel(&app, nothing_opened);
     Ok(())
 }
 

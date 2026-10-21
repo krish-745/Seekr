@@ -2,6 +2,7 @@ mod apps;
 mod builtin;
 mod clipboard;
 mod direct;
+mod fileops;
 mod files;
 mod focus;
 mod hotkey;

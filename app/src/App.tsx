@@ -26,6 +26,8 @@ function App() {
   const [viewport, setViewport] = createSignal(0);
   const [actionsOpen, setActionsOpen] = createSignal(false);
   const [actionIndex, setActionIndex] = createSignal(0);
+  // An item waiting for a second Enter before it goes to the Recycle Bin.
+  const [confirming, setConfirming] = createSignal<Item | undefined>();
 
   const current = () => items()[selected()];
   const range = createMemo(() => visibleRange(scrollTop(), viewport(), ROW, items().length));
@@ -96,6 +98,12 @@ function App() {
 
   function run(item: Item | undefined, actionId: string | undefined) {
     if (!item || !actionId) return;
+    if (actionId === "recycle" && confirming() !== item) {
+      setActionsOpen(false);
+      setConfirming(item);
+      return;
+    }
+    setConfirming(undefined);
     if (actionId === "pin" || actionId === "unpin") {
       // Pinning keeps the panel open and re-ranks the current query.
       invoke("toggle_pin", { item: item.id }).then(() => search(input.value));
@@ -106,6 +114,14 @@ function App() {
 
   function onKey(e: KeyboardEvent) {
     const actions = current()?.actions ?? [];
+    const pending = confirming();
+    if (pending) {
+      // Enter confirms; any other key backs out.
+      if (e.key === "Enter") run(pending, "recycle");
+      else setConfirming(undefined);
+      if (e.key === "Enter" || e.key === "Escape") e.preventDefault();
+      return;
+    }
     if (actionsOpen()) {
       if (e.key === "ArrowDown") setActionIndex((i) => Math.min(i + 1, actions.length - 1));
       else if (e.key === "ArrowUp") setActionIndex((i) => Math.max(i - 1, 0));
@@ -220,6 +236,13 @@ function App() {
         </Show>
       </div>
       <footer class="hints">
+        <Show when={confirming()}>
+          {(item) => (
+            <span class="confirm">
+              <kbd>↵</kbd> Move {item().title} to the Recycle Bin · any other key cancels
+            </span>
+          )}
+        </Show>
         <Show when={current()?.actions[0]}>{(a) => <span><kbd>↵</kbd> {a().label}</span>}</Show>
         <Show when={current()?.actions[1]}>{(a) => <span><kbd>Ctrl+↵</kbd> {a().label}</span>}</Show>
         <Show when={(current()?.actions.length ?? 0) > 0}>
