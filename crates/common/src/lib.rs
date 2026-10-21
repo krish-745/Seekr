@@ -1,6 +1,13 @@
 //! Shared paths, config and logging for all Seekr processes.
 
-use std::{error::Error, fs, io, path::Path, path::PathBuf};
+use std::{
+    error::Error,
+    fs,
+    io::{self, Write},
+    path::Path,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use serde::Deserialize;
 use tracing_appender::{non_blocking::WorkerGuard, rolling};
@@ -70,7 +77,26 @@ pub fn init_logging(name: &str) -> Result<WorkerGuard, Box<dyn Error + Send + Sy
         .with_ansi(false)
         .with_max_level(tracing::Level::INFO)
         .try_init()?;
+    install_panic_hook(data_dir().join("logs").join(format!("{name}.panic.log")));
     Ok(guard)
+}
+
+/// Appends panics to `path` synchronously: with `panic = "abort"` the non-blocking
+/// writer dies before flushing, and release builds have no console for stderr.
+fn install_panic_hook(path: PathBuf) {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        tracing::error!("{info}");
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let _ = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut f| writeln!(f, "unix {secs}: {info}"));
+        default_hook(info);
+    }));
 }
 
 #[cfg(test)]
@@ -105,6 +131,18 @@ mod tests {
             assert_eq!(err.kind(), io::ErrorKind::InvalidData);
             fs::remove_file(path).unwrap();
         }
+    }
+
+    #[test]
+    fn panics_are_written_to_file() {
+        let path =
+            std::env::temp_dir().join(format!("seekr-test-{}.panic.log", std::process::id()));
+        install_panic_hook(path.clone());
+        let _ = std::panic::catch_unwind(|| panic!("boom"));
+        let _ = std::panic::take_hook();
+        let text = fs::read_to_string(&path).unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(text.contains("boom"), "{text}");
     }
 
     #[test]
