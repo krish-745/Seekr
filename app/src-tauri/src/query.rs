@@ -2,6 +2,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use fsindex::filter;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State, ipc::Channel};
 
@@ -31,6 +32,15 @@ pub struct Item {
 pub struct Batch {
     pub id: u64,
     pub items: Vec<Item>,
+    /// The file filters typed, such as `ext: pdf`; only the first batch of a query carries them.
+    pub chips: Vec<Chip>,
+}
+
+#[derive(Serialize)]
+pub struct Chip {
+    pub label: String,
+    /// False when the value didn't parse, so the filter is ignored.
+    pub valid: bool,
 }
 
 #[derive(Default)]
@@ -60,30 +70,42 @@ pub async fn query(
     ranker: State<'_, Ranker>,
 ) -> Result<(), String> {
     engine.begin(id);
-    // Apps and Seekr's own commands are fast, so they are ranked together into the first batch;
-    // slower providers will append later batches.
-    let mut candidates = apps::all(&index);
-    candidates.extend(builtin::all());
+    let parsed = filter::parse(&text);
     // A typed path or URL is what the user meant, so it leads, unranked.
     let mut items = direct::items(&text);
-    items.extend(ranker.rank(&text, candidates));
+    // Apps and Seekr's own commands are fast, so they are ranked together into the first batch;
+    // slower providers append later batches. File filters mean the user wants files.
+    if parsed.filter.is_empty() {
+        let mut candidates = apps::all(&index);
+        candidates.extend(builtin::all());
+        items.extend(ranker.rank(&text, candidates));
+    }
     if !engine.is_current(id) {
         return Ok(());
     }
+    let chips = parsed
+        .chips
+        .iter()
+        .map(|c| Chip {
+            label: c.label.clone(),
+            valid: c.valid,
+        })
+        .collect();
     on_batch
-        .send(Batch { id, items })
+        .send(Batch { id, items, chips })
         .map_err(|e| e.to_string())?;
     // File names take milliseconds across all cores, so they follow as a second batch.
     let searcher = app.clone();
     let files = tauri::async_runtime::spawn_blocking(move || {
         let engine = searcher.state::<Engine>();
-        files::search(&searcher, &text, &|| !engine.is_current(id))
+        files::search(&searcher, &text, &parsed, &|| !engine.is_current(id))
     })
     .await
     .map_err(|e| e.to_string())?;
     if let Some(items) = files.filter(|items| !items.is_empty() && engine.is_current(id)) {
+        let chips = Vec::new();
         on_batch
-            .send(Batch { id, items })
+            .send(Batch { id, items, chips })
             .map_err(|e| e.to_string())?;
     }
     Ok(())

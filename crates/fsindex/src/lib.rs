@@ -8,7 +8,9 @@
 //!   `ReadDirectoryChangesW` for changes.
 //! - [`wire`]: the snapshot file and pipe messages the index service sends the app.
 //! - [`index`]: the app's packed in-memory index and fuzzy search over it.
+//! - [`filter`]: the query language for filters such as `ext:` `in:` `dm:` and `size:`.
 
+pub mod filter;
 pub mod index;
 pub mod meta;
 pub mod scan;

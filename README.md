@@ -17,6 +17,21 @@ scripts\install.ps1 -Uninstall  # remove the app; keeps your data in %LOCALAPPDA
 
 Then press Alt+Space.
 
+## Search syntax
+
+File names match fuzzily from the second character. Add filters anywhere in the query; they show as chips under the search box, and a chip turns red when its value isn't understood. With only filters, the newest matches come first.
+
+| Filter | Example | Matches |
+|---|---|---|
+| `ext:` | `ext:pdf,docx` | files with any of these extensions |
+| `kind:` | `kind:image` | `folder`, `file`, `image`, `video`, `audio`, `doc`, `code`, `archive` |
+| `folder:` | `folder:` | folders only (`folder:music` is the same as `in:music`) |
+| `in:` | `in:downloads`, `in:C:\Work` | inside a folder whose name contains the text, or inside that exact path |
+| `dm:` / `modified:` | `dm:today`, `dm:week`, `dm:3d`, `dm:2025-05`, `dm:>2025-01-01`, `dm:2025-01..2025-03` | last written in that period (local time) |
+| `size:` | `size:>100mb`, `size:<1kb`, `size:1mb..10mb`, `size:empty` | file size; a bare `size:10mb` means at least 10 MB |
+| `"…"` | `"read me"` | names containing exactly that text |
+| `-` | `-draft` | names not containing that text |
+
 ## Develop
 
 Requirements: Windows 11, Rust (stable, MSVC), Visual Studio Build Tools with the C++ workload, Node.js 20+.

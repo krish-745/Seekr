@@ -3,7 +3,7 @@
 //! C: when the service isn't installed, use the no-admin fallback: a walk, then a watcher.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap, HashSet},
     fs,
     io::{self, BufReader, BufWriter},
     path::{Path, PathBuf},
@@ -16,8 +16,11 @@ use std::{
 };
 
 use fsindex::{
+    filter::{Filter, Parsed},
     index::{Hit, Index, can_narrow},
+    meta,
     scan::{self, Change},
+    usn::Record,
     wire::{self, Message, PIPE_NAME},
 };
 use tauri::{AppHandle, Manager};
@@ -26,6 +29,7 @@ use crate::{direct, query::Item, rank::Ranker};
 
 /// The only volume the service reads.
 const SERVICE_DRIVE: char = 'C';
+const USN_REASON_FILE_DELETE: u32 = 0x200;
 /// Fuzzy matches re-ranked with location, frecency and pins, and how many of those are shown.
 const CANDIDATES: usize = 300;
 const MAX_RESULTS: usize = 50;
@@ -56,9 +60,9 @@ const WORK_FOLDERS: [&str; 3] = [r"\desktop", r"\documents", r"\downloads"];
 /// Narrowing levels kept while typing; a 16-character query rarely needs more.
 const MAX_LEVELS: usize = 16;
 
-/// The index generation they belong to, and (query, every entry it matched on each drive)
-/// pairs, each query extending the one before.
-type Levels = (u64, Vec<(String, BTreeMap<char, Vec<u32>>)>);
+/// The index generation they belong to, and (name pattern, filter, every entry it matched on
+/// each drive), each extending the one before.
+type Levels = (u64, Vec<(String, Filter, BTreeMap<char, Vec<u32>>)>);
 
 #[derive(Default)]
 pub struct Files {
@@ -110,14 +114,18 @@ fn run(app: &AppHandle, drive: char, use_service: bool) {
                 index.len(),
                 started.elapsed()
             );
+            let missing_stats = !index.has_stats();
             files.set(drive, index);
+            if use_service && missing_stats {
+                fill_stats_later(app, drive);
+            }
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => {}
         Err(e) => tracing::warn!("{drive}: cache unusable ({e}); indexing it afresh"),
     }
     loop {
         let stopped = if use_service {
-            follow(&files)
+            follow(app, &files)
         } else {
             fallback(&files, drive)
         };
@@ -130,7 +138,7 @@ fn run(app: &AppHandle, drive: char, use_service: bool) {
 
 /// shortcut: trusts whoever serves the pipe name; a same-user program could feed fake names, but
 /// it could already open the files itself. Check GetNamedPipeServerProcessId if that changes.
-fn follow(files: &Files) -> io::Result<()> {
+fn follow(app: &AppHandle, files: &Files) -> io::Result<()> {
     let mut pipe = fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -159,6 +167,7 @@ fn follow(files: &Files) -> io::Result<()> {
                 files.set(SERVICE_DRIVE, index);
                 save(files, SERVICE_DRIVE);
                 (saved_at, dirty) = (Instant::now(), false);
+                fill_stats_later(app, SERVICE_DRIVE);
             }
             Message::Changes { next_usn, records } => {
                 if let Some(index) = files.drives.write().unwrap().get_mut(&SERVICE_DRIVE) {
@@ -167,6 +176,7 @@ fn follow(files: &Files) -> io::Result<()> {
                     files.generation.fetch_add(1, Ordering::SeqCst);
                     dirty = true;
                 }
+                restat(files, SERVICE_DRIVE, &records);
             }
             Message::Hello { .. } => {
                 return Err(io::Error::new(
@@ -180,6 +190,85 @@ fn follow(files: &Files) -> io::Result<()> {
             (saved_at, dirty) = (Instant::now(), false);
         }
     }
+}
+
+/// Reads the size and date of every entry the journal touched, since its records carry neither.
+fn restat(files: &Files, drive: char, records: &[Record]) {
+    let paths: Vec<(u64, String)> = {
+        let drives = files.drives.read().unwrap();
+        let Some(index) = drives.get(&drive) else {
+            return;
+        };
+        let live: HashSet<u64> = records
+            .iter()
+            .filter(|r| r.reason & USN_REASON_FILE_DELETE == 0)
+            .map(|r| r.frn)
+            .collect();
+        live.into_iter()
+            .filter_map(|frn| Some((frn, index.path(drive, index.entry(frn)?))))
+            .collect()
+    };
+    let stats: Vec<_> = paths
+        .iter()
+        .filter_map(|(frn, path)| Some((*frn, scan::stat(Path::new(path))?.1)))
+        .collect();
+    if let Some(index) = files.drives.write().unwrap().get_mut(&drive) {
+        for (frn, (_, size, modified)) in stats {
+            index.set_stat(frn, size, modified);
+        }
+    }
+}
+
+/// The service's names come without sizes and dates; a low-priority walk (about 20 s for C:)
+/// fills them in by path. Runs after each fresh snapshot, and at startup if the cache has none.
+fn fill_stats_later(app: &AppHandle, drive: char) {
+    let app = app.clone();
+    let spawned = std::thread::Builder::new()
+        .name(format!("file-stats-{drive}"))
+        .spawn(move || fill_stats(&app.state::<Files>(), drive));
+    if let Err(e) = spawned {
+        tracing::error!("{drive}: no sizes or dates: {e}");
+    }
+}
+
+fn fill_stats(files: &Files, drive: char) {
+    let started = Instant::now();
+    let ids: HashMap<u64, u64> = {
+        let drives = files.drives.read().unwrap();
+        let Some(index) = drives.get(&drive) else {
+            return;
+        };
+        index
+            .entries()
+            .map(|(entry, frn)| (scan::path_id(Path::new(&index.path(drive, entry))), frn))
+            .collect()
+    };
+    let stats = Mutex::new(Vec::new());
+    let root = PathBuf::from(format!(r"{drive}:\"));
+    let walked = meta::walk(&root, &AtomicBool::new(false), |listing| {
+        let found: Vec<(u64, u64, i64)> = listing
+            .iter()
+            .filter_map(|m| Some((*ids.get(&scan::path_id(&m.path))?, m.size, m.modified)))
+            .collect();
+        stats.lock().unwrap().extend(found);
+    });
+    if let Err(e) = walked {
+        tracing::warn!("{drive}: sizes and dates walk failed: {e}");
+        return;
+    }
+    let stats = stats.into_inner().unwrap();
+    if let Some(index) = files.drives.write().unwrap().get_mut(&drive) {
+        for &(frn, size, modified) in &stats {
+            index.set_stat(frn, size, modified);
+        }
+    }
+    files.generation.fetch_add(1, Ordering::SeqCst);
+    tracing::info!(
+        "filled {} sizes and dates on {drive}: in {:?}",
+        stats.len(),
+        started.elapsed()
+    );
+    save(files, drive);
 }
 
 /// Walks `drive`, then follows its watcher, walking again whenever the watcher drops changes.
@@ -229,7 +318,10 @@ fn fallback(files: &Files, drive: char) -> io::Result<()> {
                     .map(|index| scan::records(index, &root, &changes))
                     .unwrap_or_default();
                 if let Some(index) = files.drives.write().unwrap().get_mut(&drive) {
-                    index.apply_watched(&records);
+                    index.apply_watched(&records.0);
+                    for &(frn, size, modified) in &records.1 {
+                        index.set_stat(frn, size, modified);
+                    }
                 }
                 files.generation.fetch_add(1, Ordering::SeqCst);
                 dirty = true;
@@ -263,20 +355,23 @@ fn save(files: &Files, drive: char) {
     }
 }
 
-/// Best file and folder names for `query`; None once a newer keystroke cancels it.
+/// Best file and folder names for `parsed` (from the typed `query`); None once a newer keystroke
+/// cancels it.
 pub fn search(
     app: &AppHandle,
     query: &str,
+    parsed: &Parsed,
     cancelled: &(dyn Fn() -> bool + Sync),
 ) -> Option<Vec<Item>> {
-    let query = query.trim();
+    let text = parsed.text.trim();
     let files = app.state::<Files>();
     let drives = files.drives.read().unwrap();
-    if drives.is_empty() || query.chars().count() < MIN_QUERY_CHARS {
+    let too_short = parsed.filter.is_empty() && text.chars().count() < MIN_QUERY_CHARS;
+    if drives.is_empty() || too_short {
         return Some(Vec::new());
     }
-    let hits = narrowed_search(&files, &drives, query, cancelled)?;
-    let boosts = app.state::<Ranker>().boosts(query);
+    let hits = narrowed_search(&files, &drives, text, &parsed.filter, cancelled)?;
+    let boosts = app.state::<Ranker>().boosts(query.trim());
     let profile = std::env::var("USERPROFILE")
         .unwrap_or_default()
         .to_lowercase();
@@ -310,6 +405,7 @@ fn narrowed_search(
     files: &Files,
     drives: &BTreeMap<char, Index>,
     query: &str,
+    filter: &Filter,
     cancelled: &(dyn Fn() -> bool + Sync),
 ) -> Option<Vec<(char, Hit)>> {
     let mut levels = files.levels.lock().unwrap();
@@ -321,7 +417,7 @@ fn narrowed_search(
     while levels
         .1
         .last()
-        .is_some_and(|(q, _)| !query.starts_with(q.as_str()))
+        .is_some_and(|(q, f, _)| f != filter || !query.starts_with(q.as_str()))
     {
         levels.1.pop();
     }
@@ -329,19 +425,26 @@ fn narrowed_search(
         .1
         .iter()
         .rev()
-        .find(|(q, _)| can_narrow(q, query))
-        .map(|(_, all)| all);
+        .find(|(q, _, _)| can_narrow(q, query))
+        .map(|(_, _, all)| all);
     let mut top = Vec::new();
     let mut all = BTreeMap::new();
     for (&drive, index) in drives {
+        // An `in:` path on another drive rules this one out.
+        let Some(on_drive) = filter.on_drive(drive) else {
+            continue;
+        };
         let narrowed = within.and_then(|w| w.get(&drive)).map(Vec::as_slice);
-        let matches = index.search(query, narrowed, CANDIDATES, cancelled)?;
+        let matches = index.search_filtered(query, narrowed, CANDIDATES, &on_drive, cancelled)?;
         top.extend(matches.top.into_iter().map(|hit| (drive, hit)));
         all.insert(drive, matches.all);
     }
-    let repeated = levels.1.last().is_some_and(|(q, _)| q == query);
+    let repeated = levels
+        .1
+        .last()
+        .is_some_and(|(q, f, _)| q == query && f == filter);
     if !repeated && levels.1.len() < MAX_LEVELS {
-        levels.1.push((query.to_string(), all));
+        levels.1.push((query.to_string(), filter.clone(), all));
     }
     Some(top)
 }

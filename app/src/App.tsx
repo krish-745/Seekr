@@ -6,6 +6,7 @@ import {
   scrollFor,
   visibleRange,
   type Batch,
+  type Chip,
   type Item,
   type Shown,
 } from "./results";
@@ -18,6 +19,7 @@ function App() {
   let input!: HTMLInputElement;
   let list!: HTMLDivElement;
   const [items, setItems] = createSignal<Item[]>([]);
+  const [chips, setChips] = createSignal<Chip[]>([]);
   const [query, setQuery] = createSignal("");
   const [selected, setSelected] = createSignal(0);
   const [scrollTop, setScrollTop] = createSignal(0);
@@ -32,7 +34,7 @@ function App() {
     return Array.from({ length: end - start }, (_, i) => start + i);
   });
 
-  let shown: Shown = { id: 0, items: [] };
+  let shown: Shown = { id: 0, items: [], chips: [] };
   let nextId = 0;
   let queue: Batch[] = [];
   let frame = 0;
@@ -58,6 +60,7 @@ function App() {
       select(0);
     }
     setItems(shown.items);
+    setChips(shown.chips);
     const t0 = typedAt.get(shown.id);
     if (t0 !== undefined && firstPainted !== shown.id) {
       firstPainted = shown.id;
@@ -153,6 +156,17 @@ function App() {
         autofocus
         onInput={(e) => search(e.currentTarget.value)}
       />
+      <Show when={chips().length > 0}>
+        <div class="chips">
+          <For each={chips()}>
+            {(chip) => (
+              <span class="chip" classList={{ invalid: !chip.valid }} title={chip.valid ? "" : "Not understood, ignored"}>
+                {chip.label}
+              </span>
+            )}
+          </For>
+        </div>
+      </Show>
       <div class="body">
         <div class="results" ref={list} onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}>
           <div class="rows" style={{ height: `${items().length * ROW}px` }}>

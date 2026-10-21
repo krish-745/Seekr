@@ -15,9 +15,10 @@ use windows::{
     Win32::{
         Foundation::{CloseHandle, HANDLE},
         Storage::FileSystem::{
-            CreateFileW, FILE_ACTION_ADDED, FILE_ACTION_REMOVED, FILE_ACTION_RENAMED_NEW_NAME,
-            FILE_ACTION_RENAMED_OLD_NAME, FILE_FLAG_BACKUP_SEMANTICS, FILE_LIST_DIRECTORY,
-            FILE_NOTIFY_CHANGE_DIR_NAME, FILE_NOTIFY_CHANGE_FILE_NAME, FILE_SHARE_DELETE,
+            CreateFileW, FILE_ACTION_ADDED, FILE_ACTION_MODIFIED, FILE_ACTION_REMOVED,
+            FILE_ACTION_RENAMED_NEW_NAME, FILE_ACTION_RENAMED_OLD_NAME, FILE_FLAG_BACKUP_SEMANTICS,
+            FILE_LIST_DIRECTORY, FILE_NOTIFY_CHANGE_DIR_NAME, FILE_NOTIFY_CHANGE_FILE_NAME,
+            FILE_NOTIFY_CHANGE_LAST_WRITE, FILE_NOTIFY_CHANGE_SIZE, FILE_SHARE_DELETE,
             FILE_SHARE_READ, FILE_SHARE_WRITE, GetDriveTypeW, GetLogicalDrives, OPEN_EXISTING,
             ReadDirectoryChangesW,
         },
@@ -72,24 +73,41 @@ fn record(path: &Path, attributes: u32, reason: u32) -> Option<Record> {
     })
 }
 
-/// Every name under `root` (such as `D:\`), from a low-priority parallel walk that never enters
-/// reparse points. Folders this user can't list, like other people's profiles, are left out.
+/// An entry's id, size in bytes and last write time (FILETIME), for `Index::set_stat`.
+pub type Stat = (u64, u64, i64);
+
+fn from_meta(m: &meta::Meta) -> Option<(Record, Stat)> {
+    let r = record(&m.path, m.attributes, 0)?;
+    let stat = (r.frn, m.size, m.modified);
+    Some((r, stat))
+}
+
+/// Every name under `root` (such as `D:\`), with sizes and dates, from a low-priority parallel
+/// walk that never enters reparse points. Folders this user can't list, like other people's
+/// profiles, are left out.
 pub fn scan(root: &Path, cancel: &AtomicBool) -> io::Result<Index> {
-    let records = Mutex::new(Vec::new());
+    let found = Mutex::new((Vec::new(), Vec::new()));
     meta::walk(root, cancel, |listing| {
-        let batch: Vec<Record> = listing
-            .iter()
-            .filter_map(|m| record(&m.path, m.attributes, 0))
-            .collect();
-        records.lock().unwrap().extend(batch);
+        let (records, stats): (Vec<Record>, Vec<Stat>) =
+            listing.iter().filter_map(from_meta).unzip();
+        let mut found = found.lock().unwrap();
+        found.0.extend(records);
+        found.1.extend(stats);
     })?;
-    Ok(Index::from_records(0, 0, records.into_inner().unwrap()))
+    let (records, stats) = found.into_inner().unwrap();
+    let mut index = Index::from_records(0, 0, records);
+    for (frn, size, modified) in stats {
+        index.set_stat(frn, size, modified);
+    }
+    Ok(index)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Change {
     Added(PathBuf),
     Removed(PathBuf),
+    /// Written to: a new size or date.
+    Modified(PathBuf),
     /// Changes were lost; only a rescan can catch up.
     Overflow,
 }
@@ -120,7 +138,10 @@ pub fn watch(root: &Path, mut on_changes: impl FnMut(Vec<Change>) -> bool) -> io
                 buf.as_mut_ptr().cast(),
                 WATCH_BUFFER_BYTES as u32,
                 true,
-                FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME,
+                FILE_NOTIFY_CHANGE_FILE_NAME
+                    | FILE_NOTIFY_CHANGE_DIR_NAME
+                    | FILE_NOTIFY_CHANGE_SIZE
+                    | FILE_NOTIFY_CHANGE_LAST_WRITE,
                 Some(&mut returned),
                 None,
                 None,
@@ -174,6 +195,8 @@ fn parse_notifications(root: &Path, mut bytes: &[u8]) -> Vec<Change> {
             changes.push(Change::Added(path));
         } else if action == FILE_ACTION_REMOVED || action == FILE_ACTION_RENAMED_OLD_NAME {
             changes.push(Change::Removed(path));
+        } else if action == FILE_ACTION_MODIFIED {
+            changes.push(Change::Modified(path));
         }
         if next == 0 {
             break;
@@ -183,19 +206,21 @@ fn parse_notifications(root: &Path, mut bytes: &[u8]) -> Vec<Change> {
     changes
 }
 
-/// Index records for a batch of changes. A folder that appears (created, renamed or moved in) is
-/// walked, since the watcher doesn't report what it already held. Names under folders that are
-/// not in the index, such as other users' profiles, are dropped.
-pub fn records(index: &Index, root: &Path, changes: &[Change]) -> Vec<Record> {
+/// Index records and stats for a batch of changes. A folder that appears (created, renamed or
+/// moved in) is walked, since the watcher doesn't report what it already held. Names under
+/// folders that are not in the index, such as other users' profiles, are dropped.
+pub fn records(index: &Index, root: &Path, changes: &[Change]) -> (Vec<Record>, Vec<Stat>) {
     let root_id = path_id(root);
     let mut added = HashSet::new();
     let mut out = Vec::new();
+    let mut stats = Vec::new();
     for change in changes {
         match change {
             Change::Removed(path) => out.extend(record(path, 0, USN_REASON_FILE_DELETE)),
+            Change::Modified(path) => stats.extend(stat(path).map(|(_, s)| s)),
             Change::Added(path) => {
                 // Gone again already, as temporary files often are.
-                let Ok(attributes) = path.symlink_metadata().map(|m| m.file_attributes()) else {
+                let Some((attributes, s)) = stat(path) else {
                     continue;
                 };
                 let Some(r) = record(path, attributes, 0) else {
@@ -208,27 +233,35 @@ pub fn records(index: &Index, root: &Path, changes: &[Change]) -> Vec<Record> {
                 }
                 added.insert(r.frn);
                 out.push(r);
+                stats.push(s);
                 let folder = attributes & DIRECTORY_ATTRIBUTE != 0
                     && attributes & REPARSE_POINT_ATTRIBUTE == 0;
                 if folder {
                     let inside = Mutex::new(Vec::new());
                     let _ = meta::walk(path, &AtomicBool::new(false), |listing| {
-                        let mut inside = inside.lock().unwrap();
-                        inside.extend(
-                            listing
-                                .iter()
-                                .filter_map(|m| record(&m.path, m.attributes, 0)),
-                        );
+                        inside
+                            .lock()
+                            .unwrap()
+                            .extend(listing.iter().filter_map(from_meta));
                     });
-                    let inside = inside.into_inner().unwrap();
-                    added.extend(inside.iter().map(|r| r.frn));
-                    out.extend(inside);
+                    for (r, s) in inside.into_inner().unwrap() {
+                        added.insert(r.frn);
+                        out.push(r);
+                        stats.push(s);
+                    }
                 }
             }
             Change::Overflow => {}
         }
     }
-    out
+    (out, stats)
+}
+
+/// Attributes and stat of `path` without following a link; None once it's gone.
+pub fn stat(path: &Path) -> Option<(u32, Stat)> {
+    let m = path.symlink_metadata().ok()?;
+    let modified = m.last_write_time() as i64;
+    Some((m.file_attributes(), (path_id(path), m.len(), modified)))
 }
 
 #[cfg(test)]
@@ -286,6 +319,15 @@ mod tests {
         writer.join().unwrap();
     }
 
+    fn notes_size(index: &Index) -> Option<u64> {
+        let hit = index
+            .search("notes.txt", None, 1, &|| false)?
+            .top
+            .first()?
+            .entry;
+        index.size(hit)
+    }
+
     #[test]
     fn ids_ignore_case() {
         assert_eq!(
@@ -339,17 +381,21 @@ mod tests {
         fs::rename(&outside, root.join("moved")).unwrap();
         fs::remove_dir_all(root.join("docs")).unwrap();
         fs::write(root.join("fresh.md"), b"").unwrap();
+        fs::write(root.join("notes.txt"), b"12345").unwrap();
 
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while std::time::Instant::now() < deadline {
             let Ok(changes) = rx.recv_timeout(Duration::from_millis(300)) else {
-                if found(&index, "fresh", &root).len() == 1 {
+                if found(&index, "fresh", &root).len() == 1 && notes_size(&index) == Some(5) {
                     break;
                 }
                 continue;
             };
-            let batch = records(&index, &root, &changes);
+            let (batch, stats) = records(&index, &root, &changes);
             index.apply_watched(&batch);
+            for (frn, size, modified) in stats {
+                index.set_stat(frn, size, modified);
+            }
         }
         assert_eq!(
             found(&index, "thesis", &root),
@@ -357,6 +403,7 @@ mod tests {
         );
         assert!(found(&index, "report", &root).is_empty());
         assert_eq!(found(&index, "fresh", &root).len(), 1);
+        assert_eq!(notes_size(&index), Some(5), "a write updates the size");
         fs::remove_dir_all(&root).unwrap();
     }
 }

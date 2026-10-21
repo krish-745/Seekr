@@ -7,22 +7,26 @@ export type Item = {
   icon: string | null;
   actions: Action[];
 };
-export type Batch = { id: number; items: Item[] };
-export type Shown = { id: number; items: Item[] };
+export type Chip = { label: string; valid: boolean };
+export type Batch = { id: number; items: Item[]; chips: Chip[] };
+export type Shown = { id: number; items: Item[]; chips: Chip[] };
 
 /**
  * Applies batches in arrival order. The first batch of a newer query replaces the list;
  * later batches of the same query append, so rows above the highlight never move.
- * Batches from older queries are dropped.
+ * Batches from older queries are dropped. Filter chips come with a query's first batch.
  */
 export function applyBatches(shown: Shown, batches: Batch[]): Shown {
-  let { id, items } = shown;
+  let { id, items, chips } = shown;
   for (const b of batches) {
     if (b.id < id) continue;
-    items = b.id > id ? b.items : [...items, ...b.items];
+    if (b.id > id) {
+      items = b.items;
+      chips = b.chips;
+    } else items = [...items, ...b.items];
     id = b.id;
   }
-  return { id, items };
+  return { id, items, chips };
 }
 
 /** Rows to render for a fixed row height: [start, end), with a few spare rows either side. */

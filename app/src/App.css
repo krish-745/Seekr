@@ -7,6 +7,7 @@
   --border: rgb(0 0 0 / 0.08);
   --selection: rgb(0 0 0 / 0.06);
   --surface: rgb(255 255 255 / 0.7);
+  --danger: #c42b1c;
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
 }
 
@@ -18,6 +19,7 @@
     --border: rgb(255 255 255 / 0.08);
     --selection: rgb(255 255 255 / 0.08);
     --surface: rgb(40 40 40 / 0.95);
+    --danger: #ff99a4;
   }
 }
 
@@ -53,6 +55,29 @@ body {
 
 .query::placeholder {
   color: var(--text-muted);
+}
+
+/* File filters recognised in the query, such as "ext: pdf". */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.chip {
+  padding: 2px 8px;
+  font-size: 12px;
+  border-radius: 10px;
+  background: var(--selection);
+  border: 1px solid var(--border);
+}
+
+.chip.invalid {
+  color: var(--danger);
+  border-style: dashed;
+  background: transparent;
 }
 
 .body {

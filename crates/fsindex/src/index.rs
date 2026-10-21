@@ -12,7 +12,7 @@ use nucleo_matcher::{
     pattern::{AtomKind, CaseMatching, Normalization, Pattern},
 };
 
-use crate::usn::Record;
+use crate::{filter::Filter, usn::Record};
 
 const NONE: u32 = u32::MAX;
 const DIR: u8 = 1;
@@ -20,7 +20,11 @@ const DELETED: u8 = 2;
 const DIRECTORY_ATTRIBUTE: u32 = 0x10;
 const USN_REASON_FILE_DELETE: u32 = 0x200;
 const USN_REASON_RENAME_OLD_NAME: u32 = 0x1000;
-const MAGIC: &[u8; 8] = b"SEEKRIX1";
+const MAGIC: &[u8; 8] = b"SEEKRIX2";
+const UNKNOWN_SIZE: u64 = u64::MAX;
+/// FILETIME of 2000-01-01 UTC; modified times are stored as seconds since then, 0 if unknown.
+const FILETIME_2000: i64 = 125_911_584_000_000_000;
+const TICKS_PER_SECOND: i64 = 10_000_000;
 /// Queries this short match as a substring. Fuzzy "in" matches a third of all names on a drive,
 /// costs the most to score, and nobody typing two letters wants them scattered through a name.
 const SUBSTRING_UP_TO: usize = 2;
@@ -43,7 +47,27 @@ pub struct Index {
     name_lens: Vec<u16>,
     /// UTF-8 names back to back; renames append, and `save` drops the old bytes.
     names: Vec<u8>,
+    /// Bytes, or UNKNOWN_SIZE until a walk or a change reports it.
+    sizes: Vec<u64>,
+    /// Last write, in seconds since 2000 (0 = unknown); four bytes instead of eight per entry.
+    times: Vec<u32>,
     by_frn: HashMap<u64, u32>,
+}
+
+/// How every search worker scores a name.
+struct Scoring<'a> {
+    pattern: &'a Pattern,
+    /// The lower-case needle when nucleo's greedy matcher ranks a large one-word search.
+    greedy: Option<&'a str>,
+    prepared: Option<&'a Prepared<'a>>,
+    /// No name to match: newest first.
+    by_recency: bool,
+}
+
+/// A filter with its `in:` terms resolved to folder marks, one Vec per term.
+struct Prepared<'f> {
+    filter: &'f Filter,
+    within: Vec<Vec<bool>>,
 }
 
 /// A min-heap of (score, shorter name first, entry) keeping each worker's best `limit` matches.
@@ -177,6 +201,8 @@ impl Index {
         self.name_starts.push(self.names.len() as u32);
         self.name_lens
             .push(r.name.len().min(u16::MAX as usize) as u16);
+        self.sizes.push(UNKNOWN_SIZE);
+        self.times.push(0);
         self.names.extend_from_slice(r.name.as_bytes());
         self.by_frn.insert(r.frn, i);
     }
@@ -187,6 +213,40 @@ impl Index {
 
     pub fn contains(&self, frn: u64) -> bool {
         self.by_frn.contains_key(&frn)
+    }
+
+    pub fn entry(&self, frn: u64) -> Option<u32> {
+        self.by_frn.get(&frn).copied()
+    }
+
+    /// Whether any entry has a size yet; false for a fresh service snapshot.
+    pub fn has_stats(&self) -> bool {
+        self.sizes.iter().any(|&s| s != UNKNOWN_SIZE)
+    }
+
+    /// Live entries with their reference numbers.
+    pub fn entries(&self) -> impl Iterator<Item = (u32, u64)> + '_ {
+        (0..self.frns.len())
+            .filter(|&i| self.flags[i] & DELETED == 0)
+            .map(|i| (i as u32, self.frns[i]))
+    }
+
+    /// Records a size and last write time (FILETIME) for the entry with this reference number.
+    pub fn set_stat(&mut self, frn: u64, size: u64, modified: i64) {
+        if let Some(&i) = self.by_frn.get(&frn) {
+            self.sizes[i as usize] = size;
+            self.times[i as usize] = seconds_since_2000(modified);
+        }
+    }
+
+    pub fn size(&self, entry: u32) -> Option<u64> {
+        Some(self.sizes[entry as usize]).filter(|&s| s != UNKNOWN_SIZE)
+    }
+
+    /// Last write time as a FILETIME, to the second.
+    pub fn modified(&self, entry: u32) -> Option<i64> {
+        let t = self.times[entry as usize];
+        (t != 0).then(|| FILETIME_2000 + i64::from(t) * TICKS_PER_SECOND)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -228,6 +288,22 @@ impl Index {
         limit: usize,
         cancelled: &(dyn Fn() -> bool + Sync),
     ) -> Option<Matches> {
+        self.search_filtered(query, within, limit, &Filter::default(), cancelled)
+    }
+
+    /// `search` over the entries `filter` accepts. An empty query matches all of them, newest
+    /// first. `within` must come from a search with the same filter.
+    pub fn search_filtered(
+        &self,
+        query: &str,
+        within: Option<&[u32]>,
+        limit: usize,
+        filter: &Filter,
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Option<Matches> {
+        let prepared = (!filter.is_empty()).then(|| self.prepare(filter));
+        let prepared = prepared.as_ref();
+        let by_recency = query.trim().is_empty();
         let pattern = if uses_substring(query) {
             Pattern::new(
                 query,
@@ -253,12 +329,18 @@ impl Index {
             .then(|| query.trim().to_lowercase());
         let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
         let chunk = candidates.len().div_ceil(threads).max(1);
+        let scoring = Scoring {
+            pattern: &pattern,
+            greedy: greedy.as_deref(),
+            prepared,
+            by_recency,
+        };
         let parts: Vec<Option<(TopK, Vec<u32>)>> = std::thread::scope(|s| {
             let workers: Vec<_> = candidates
                 .chunks(chunk)
                 .map(|part| {
-                    let (pattern, greedy) = (&pattern, greedy.as_deref());
-                    s.spawn(move || self.search_part(pattern, greedy, part, limit, cancelled))
+                    let scoring = &scoring;
+                    s.spawn(move || self.search_part(scoring, part, limit, cancelled))
                 })
                 .collect();
             workers
@@ -297,8 +379,7 @@ impl Index {
 
     fn search_part(
         &self,
-        pattern: &Pattern,
-        greedy: Option<&str>,
+        scoring: &Scoring,
         part: &[u32],
         limit: usize,
         cancelled: &(dyn Fn() -> bool + Sync),
@@ -316,19 +397,22 @@ impl Index {
         // Utf32Str::new picks the ASCII form when it can; nucleo never matches an ASCII name
         // against a needle in the Unicode form.
         let mut needle_buf = Vec::new();
-        let needle = greedy.map(|q| Utf32Str::new(q, &mut needle_buf));
+        let needle = scoring.greedy.map(|q| Utf32Str::new(q, &mut needle_buf));
         for (n, &entry) in part.iter().enumerate() {
             if n % CANCEL_EVERY == 0 && cancelled() {
                 return None;
             }
             let i = entry as usize;
-            if self.flags[i] & DELETED != 0 {
+            if self.flags[i] & DELETED != 0
+                || scoring.prepared.is_some_and(|p| !self.accepts(p, entry))
+            {
                 continue;
             }
             let name = Utf32Str::new(self.name(entry), &mut buf);
             let score = match needle {
+                _ if scoring.by_recency => Some(self.times[i]),
                 Some(needle) => matcher.fuzzy_match_greedy(name, needle).map(u32::from),
-                None => pattern.score(name, &mut matcher),
+                None => scoring.pattern.score(name, &mut matcher),
             };
             let Some(score) = score else {
                 continue;
@@ -340,6 +424,95 @@ impl Index {
             }
         }
         Some((top, matched))
+    }
+
+    /// Marks, once per search, the folders each `in:` term names.
+    fn prepare<'f>(&self, filter: &'f Filter) -> Prepared<'f> {
+        let within = filter
+            .within
+            .iter()
+            .map(|term| match term.strip_prefix('\\') {
+                Some(path) => self.folders_at(path),
+                None => (0..self.frns.len())
+                    .map(|i| {
+                        self.flags[i] & (DIR | DELETED) == DIR
+                            && contains_lowercase(self.name(i as u32), term)
+                    })
+                    .collect(),
+            })
+            .collect();
+        Prepared { filter, within }
+    }
+
+    /// Marks the folder at `path` (lower case, from the drive root, no leading backslash). The
+    /// drive root itself marks nothing: `accepts` lets everything through for it.
+    fn folders_at(&self, path: &str) -> Vec<bool> {
+        let parts: Vec<&str> = path.split('\\').filter(|p| !p.is_empty()).collect();
+        let Some((last, above)) = parts.split_last() else {
+            return vec![false; self.frns.len()];
+        };
+        (0..self.frns.len())
+            .map(|i| {
+                if self.flags[i] & (DIR | DELETED) != DIR
+                    || !self.name(i as u32).eq_ignore_ascii_case(last)
+                {
+                    return false;
+                }
+                let mut at = self.parents[i];
+                for want in above.iter().rev() {
+                    if at == NONE || !self.name(at).eq_ignore_ascii_case(want) {
+                        return false;
+                    }
+                    at = self.parents[at as usize];
+                }
+                at == NONE
+            })
+            .collect()
+    }
+
+    fn accepts(&self, p: &Prepared, entry: u32) -> bool {
+        let f = p.filter;
+        let i = entry as usize;
+        let is_dir = self.flags[i] & DIR != 0;
+        if f.folders.is_some_and(|folders| folders != is_dir) {
+            return false;
+        }
+        if !f.exts.is_empty() {
+            let ext = self.name(entry).rsplit_once('.').map(|(_, e)| e);
+            if is_dir || !ext.is_some_and(|e| f.exts.iter().any(|x| x.eq_ignore_ascii_case(e))) {
+                return false;
+            }
+        }
+        if let Some((min, max)) = f.size {
+            let size = self.sizes[i];
+            if is_dir || size == UNKNOWN_SIZE || size < min || size > max {
+                return false;
+            }
+        }
+        if let Some((from, to)) = f.modified {
+            let Some(modified) = self.modified(entry) else {
+                return false;
+            };
+            if modified < from || modified >= to {
+                return false;
+            }
+        }
+        p.within.iter().zip(&f.within).all(|(marks, term)| {
+            if term.trim_start_matches('\\').is_empty() {
+                return true;
+            }
+            let mut at = self.parents[i];
+            for _ in 0..512 {
+                if at == NONE {
+                    return false;
+                }
+                if marks[at as usize] {
+                    return true;
+                }
+                at = self.parents[at as usize];
+            }
+            false
+        })
     }
 
     /// Writes the live entries (renamed and deleted names are dropped) for a later `load`.
@@ -374,6 +547,14 @@ impl Index {
         live.iter()
             .for_each(|&i| buf.extend(self.name_lens[i].to_le_bytes()));
         z.write_all(&buf)?;
+        buf.clear();
+        live.iter()
+            .for_each(|&i| buf.extend(self.sizes[i].to_le_bytes()));
+        z.write_all(&buf)?;
+        buf.clear();
+        live.iter()
+            .for_each(|&i| buf.extend(self.times[i].to_le_bytes()));
+        z.write_all(&buf)?;
         for &i in &live {
             z.write_all(self.name(i as u32).as_bytes())?;
         }
@@ -400,6 +581,8 @@ impl Index {
         let parents: Vec<u32> = read_array(&mut z, n, u32::from_le_bytes)?;
         let flags: Vec<u8> = read_array(&mut z, n, |b: [u8; 1]| b[0])?;
         let name_lens: Vec<u16> = read_array(&mut z, n, u16::from_le_bytes)?;
+        let sizes: Vec<u64> = read_array(&mut z, n, u64::from_le_bytes)?;
+        let times: Vec<u32> = read_array(&mut z, n, u32::from_le_bytes)?;
         let total: usize = name_lens.iter().map(|&l| l as usize).sum();
         let mut names = vec![0u8; total];
         z.read_exact(&mut names)?;
@@ -428,9 +611,27 @@ impl Index {
             name_starts,
             name_lens,
             names,
+            sizes,
+            times,
             by_frn,
         })
     }
+}
+
+/// Whether `name` contains the lower-case `term`, ignoring case; ASCII names skip allocating.
+fn contains_lowercase(name: &str, term: &str) -> bool {
+    if name.is_ascii() && term.is_ascii() {
+        name.as_bytes()
+            .windows(term.len().max(1))
+            .any(|w| w.eq_ignore_ascii_case(term.as_bytes()))
+    } else {
+        name.to_lowercase().contains(term)
+    }
+}
+
+/// Seconds since 2000 for a FILETIME, clamped into 1..=u32::MAX so that 0 can mean unknown.
+fn seconds_since_2000(filetime: i64) -> u32 {
+    ((filetime - FILETIME_2000) / TICKS_PER_SECOND).clamp(1, i64::from(u32::MAX)) as u32
 }
 
 fn matcher() -> Matcher {
@@ -448,13 +649,14 @@ pub fn uses_substring(query: &str) -> bool {
 }
 
 /// Whether `previous`'s matches contain every match of `query`, so `search` may look only there.
-/// One-letter substring and fuzzy matches are the same set, so they narrow either kind. `!`
-/// negates in nucleo's syntax, where a longer query can match more names, not fewer.
+/// An empty query matched every name, and one-letter substring and fuzzy matches are the same
+/// set, so those narrow either kind. `!` negates in nucleo's syntax, where a longer query can
+/// match more names, not fewer.
 pub fn can_narrow(previous: &str, query: &str) -> bool {
     query.starts_with(previous)
         && !query.contains('!')
         && (uses_substring(previous) == uses_substring(query)
-            || previous.trim().chars().count() == 1)
+            || previous.trim().chars().count() <= 1)
 }
 
 fn read_u64(r: &mut impl Read) -> io::Result<u64> {
@@ -572,6 +774,71 @@ mod tests {
         assert_eq!(index.len(), 5);
     }
 
+    fn filtered(index: &Index, query: &str) -> Vec<String> {
+        let parsed = crate::filter::parse(query);
+        let filter = parsed.filter.on_drive('C').unwrap();
+        index
+            .search_filtered(&parsed.text, None, 10, &filter, &|| false)
+            .unwrap()
+            .top
+            .iter()
+            .map(|h| index.name(h.entry).to_string())
+            .collect()
+    }
+
+    #[test]
+    fn filters_by_extension_folder_size_and_date() {
+        let mut index = sample();
+        let day = 24 * 3600 * TICKS_PER_SECOND;
+        let jan_2025 = FILETIME_2000 + 9132 * day; // 2025-01-01
+        index.set_stat(13, 5 << 20, jan_2025);
+        index.set_stat(14, 10, jan_2025 + 40 * day);
+        assert_eq!(filtered(&index, "ext:pdf"), ["report.pdf"]);
+        assert_eq!(filtered(&index, "ext:pdf,txt"), ["notes.txt", "report.pdf"]);
+        assert_eq!(filtered(&index, "r ext:txt"), Vec::<String>::new());
+        assert_eq!(filtered(&index, "folder: doc"), ["Documents"]);
+        assert_eq!(filtered(&index, "kind:file in:documents"), ["report.pdf"]);
+        assert_eq!(filtered(&index, r"in:c:\users\me kind:file").len(), 2);
+        assert!(
+            filtered(&index, r"in:c:\me kind:file").is_empty(),
+            "not from the root"
+        );
+        assert_eq!(filtered(&index, "size:>1mb"), ["report.pdf"]);
+        assert_eq!(filtered(&index, "dm:2025-01"), ["report.pdf"]);
+        assert_eq!(filtered(&index, "dm:>2025-01-15"), ["notes.txt"]);
+        assert_eq!(filtered(&index, "-notes kind:file"), ["report.pdf"]);
+        assert_eq!(filtered(&index, r#""port.p""#), ["report.pdf"]);
+        index.apply(&rec(15, 11, "Read Me.txt", false));
+        assert_eq!(filtered(&index, r#""read me""#), ["Read Me.txt"]);
+        assert!(filtered(&index, r#""readme""#).is_empty());
+    }
+
+    #[test]
+    fn filters_alone_list_newest_first_and_skip_unknown_dates() {
+        let mut index = sample();
+        index.set_stat(13, 1, FILETIME_2000 + 100 * TICKS_PER_SECOND);
+        index.set_stat(14, 1, FILETIME_2000 + 200 * TICKS_PER_SECOND);
+        assert_eq!(filtered(&index, "kind:file"), ["notes.txt", "report.pdf"]);
+        assert_eq!(
+            filtered(&index, "dm:2000").len(),
+            2,
+            "folders have no date yet"
+        );
+    }
+
+    #[test]
+    fn stats_survive_save_and_load() {
+        let mut index = sample();
+        index.set_stat(13, 42, FILETIME_2000 + 7 * TICKS_PER_SECOND);
+        let mut file = Vec::new();
+        index.save(&mut file).unwrap();
+        let back = Index::load(&file[..]).unwrap();
+        let e = entry(&back, 13);
+        assert_eq!(back.size(e), Some(42));
+        assert_eq!(back.modified(e), Some(FILETIME_2000 + 7 * TICKS_PER_SECOND));
+        assert_eq!(back.size(entry(&back, 14)), None);
+    }
+
     #[test]
     fn watched_folder_removal_takes_its_contents() {
         let mut index = sample();
@@ -674,5 +941,24 @@ fn real_index_timings() {
             println!("{q:>12}: {:>8} matches in {:?}", m.all.len(), t.elapsed());
             levels.push((q, m.all));
         }
+    }
+    for query in [
+        "ext:pdf",
+        "report ext:pdf,docx",
+        "kind:image dm:week",
+        "in:downloads size:>100mb",
+        r"in:c:\users kind:code",
+    ] {
+        let parsed = crate::filter::parse(query);
+        let filter = parsed.filter.on_drive('C').unwrap();
+        let t = std::time::Instant::now();
+        let m = index
+            .search_filtered(&parsed.text, None, 300, &filter, &never)
+            .unwrap();
+        println!(
+            "{query:>26}: {:>8} matches in {:?}",
+            m.all.len(),
+            t.elapsed()
+        );
     }
 }
