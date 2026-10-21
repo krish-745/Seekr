@@ -4,6 +4,7 @@ export type Item = {
   title: string;
   subtitle: string;
   preview: string;
+  icon: string | null;
   actions: Action[];
 };
 export type Batch = { id: number; items: Item[] };

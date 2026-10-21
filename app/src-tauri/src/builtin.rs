@@ -42,6 +42,7 @@ fn items() -> Vec<Item> {
             title: "Open Seekr config".into(),
             subtitle: config.clone(),
             preview: format!("Edit {config} to change the hotkey.\n\n{CONFIG_TEMPLATE}"),
+            icon: None,
             actions: vec![OPEN, REVEAL],
         },
         Item {
@@ -49,6 +50,7 @@ fn items() -> Vec<Item> {
             title: "Open Seekr logs".into(),
             subtitle: logs.clone(),
             preview: format!("Daily logs, latency summaries and panic reports live in {logs}."),
+            icon: None,
             actions: vec![OPEN],
         },
         Item {
@@ -56,6 +58,7 @@ fn items() -> Vec<Item> {
             title: "Quit Seekr".into(),
             subtitle: "Stop Seekr until the next login or launch".into(),
             preview: "Closes the panel, tray icon and hotkey.".into(),
+            icon: None,
             actions: vec![QUIT],
         },
     ]

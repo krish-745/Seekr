@@ -1,3 +1,4 @@
+mod apps;
 mod builtin;
 mod hotkey;
 mod query;
@@ -43,8 +44,15 @@ fn try_show(app: &AppHandle) -> tauri::Result<()> {
     let Some(w) = app.get_webview_window("main") else {
         return Ok(());
     };
-    let cursor = app.cursor_position()?;
-    let monitor = match app.monitor_from_point(cursor.x, cursor.y)? {
+    // GetCursorPos fails while the desktop is unavailable (e.g. a UAC prompt); use the primary.
+    let under_cursor = match app.cursor_position() {
+        Ok(c) => app.monitor_from_point(c.x, c.y)?,
+        Err(e) => {
+            tracing::warn!("no cursor position ({e}); using the primary monitor");
+            None
+        }
+    };
+    let monitor = match under_cursor {
         Some(m) => Some(m),
         None => app.primary_monitor()?,
     };
@@ -61,6 +69,7 @@ fn try_show(app: &AppHandle) -> tauri::Result<()> {
         w.set_position(PhysicalPosition::new(x, y))?;
     }
     app.state::<Telemetry>().mark_shown();
+    apps::refresh(app);
     w.show()?;
     w.set_focus()
 }
@@ -181,9 +190,23 @@ pub fn run() {
                 .build(),
         )
         .manage(query::Engine::default())
+        .manage(apps::AppIndex::default())
+        .register_uri_scheme_protocol("icon", |_ctx, request| {
+            let name = request.uri().path().trim_start_matches('/');
+            let bytes = apps::is_icon_file(name)
+                .then(|| std::fs::read(apps::icon_dir().join(name)).ok())
+                .flatten();
+            let response = tauri::http::Response::builder();
+            match bytes {
+                Some(png) => response.header("Content-Type", "image/png").body(png),
+                None => response.status(404).body(Vec::new()),
+            }
+            .expect("static response parts are valid")
+        })
         .manage(Telemetry::default())
         .setup(|app| {
             register_hotkey(app.handle());
+            apps::refresh(app.handle());
             build_tray(app)?;
             if !std::env::args().any(|a| a == HIDDEN_ARG) {
                 show(app.handle());

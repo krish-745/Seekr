@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { applyBatches, firstVisible, scrollFor, visibleRange, type Item } from "./results";
 
-const item = (id: string): Item => ({ id, title: id, subtitle: "", preview: "", actions: [] });
+const item = (id: string): Item => ({ id, title: id, subtitle: "", preview: "", icon: null, actions: [] });
 
 describe("applyBatches", () => {
   it("replaces on a newer query and appends within one", () => {

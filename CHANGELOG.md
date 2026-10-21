@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- App search: every Start menu shortcut and Store app (shell:AppsFolder) is searchable by name and launches with Enter. Icons are rendered once into `%LOCALAPPDATA%\Seekr\icons`. The list is rescanned in the background at most once a minute when the panel opens, so new installs appear on the next open.
+- If Windows can't report the cursor position, the panel opens on the primary monitor instead of failing.
 - Panel layout: results list, preview pane and hint bar. Keys: Up/Down select, Enter runs the main action, Ctrl+Enter the second one, Tab or Ctrl+K lists all actions, Alt+1-9 runs a visible row, Esc closes the actions list or the panel.
 - Seekr's own commands are searchable: Open Seekr config (creates a commented `config.toml` if missing), Open Seekr logs, Quit Seekr.
 - Every keystroke starts a new query that supersedes older ones; results reach the screen at most once per frame.

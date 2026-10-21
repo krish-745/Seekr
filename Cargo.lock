@@ -3041,6 +3041,7 @@ name = "seekr"
 version = "0.1.0"
 dependencies = [
  "common",
+ "png 0.18.1",
  "serde",
  "serde_json",
  "tauri",

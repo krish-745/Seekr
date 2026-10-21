@@ -142,6 +142,9 @@ function App() {
                   onClick={() => select(i)}
                   onDblClick={() => run(items()[i], items()[i]?.actions[0]?.id)}
                 >
+                  <Show when={items()[i]?.icon} fallback={<span class="icon" />}>
+                    {(src) => <img class="icon" src={src()} alt="" />}
+                  </Show>
                   <div class="text">
                     <div class="title">{items()[i]?.title}</div>
                     <div class="subtitle">{items()[i]?.subtitle}</div>
@@ -159,6 +162,7 @@ function App() {
           <Show when={current()}>
             {(item) => (
               <>
+                <Show when={item().icon}>{(src) => <img class="preview-icon" src={src()} alt="" />}</Show>
                 <h2>{item().title}</h2>
                 <p class="subtitle">{item().subtitle}</p>
                 <pre>{item().preview}</pre>

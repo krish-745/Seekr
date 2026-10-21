@@ -2,7 +2,7 @@
 
 A fast keyboard launcher for Windows: apps, files, file contents and meaning, plus everyday tools, all on one hotkey.
 
-**Status:** early development (Phase 1: launcher core). Alt+Space opens the search panel; only Seekr's own commands (config, logs, quit) are searchable yet.
+**Status:** early development (Phase 1: launcher core). Alt+Space opens the search panel and launches installed apps (Start menu and Store); files, tools and AI come later.
 
 ## Develop
 

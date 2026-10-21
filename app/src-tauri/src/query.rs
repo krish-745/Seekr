@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::Serialize;
 use tauri::{AppHandle, State, ipc::Channel};
 
-use crate::builtin;
+use crate::{apps, builtin};
 
 #[derive(Clone, Serialize)]
 pub struct Action {
@@ -20,11 +20,13 @@ pub struct Item {
     pub title: String,
     pub subtitle: String,
     pub preview: String,
+    /// `http://icon.localhost/<file>` from the icon cache.
+    pub icon: Option<String>,
     pub actions: Vec<Action>,
 }
 
-/// Results from one provider for query `id`. Each provider sends exactly one batch per query,
-/// so the first batch of a new id tells the UI to replace the old list.
+/// Results from one provider for query `id`. Each provider sends one batch per query (none once
+/// the query is superseded), so the first batch of a new id tells the UI to replace the old list.
 #[derive(Serialize)]
 pub struct Batch {
     pub id: u64,
@@ -53,10 +55,17 @@ pub async fn query(
     text: String,
     on_batch: Channel<Batch>,
     engine: State<'_, Engine>,
+    index: State<'_, apps::AppIndex>,
 ) -> Result<(), String> {
     engine.begin(id);
-    let items = builtin::search(&text);
-    if engine.is_current(id) {
+    // One batch per provider, skipped as soon as a newer keystroke takes over.
+    let providers: [&dyn Fn() -> Vec<Item>; 2] =
+        [&|| apps::search(&index, &text), &|| builtin::search(&text)];
+    for provider in providers {
+        if !engine.is_current(id) {
+            break;
+        }
+        let items = provider();
         on_batch
             .send(Batch { id, items })
             .map_err(|e| e.to_string())?;
@@ -67,7 +76,10 @@ pub async fn query(
 #[tauri::command]
 pub fn run_action(app: AppHandle, item: String, action: String) -> Result<(), String> {
     tracing::info!("run {item} {action}");
-    builtin::run(&app, &item, &action)?;
+    match item.strip_prefix("app:") {
+        Some(id) => apps::launch(id)?,
+        None => builtin::run(&app, &item, &action)?,
+    }
     crate::hide_panel(&app);
     Ok(())
 }
