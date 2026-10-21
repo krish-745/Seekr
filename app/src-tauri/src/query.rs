@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::Serialize;
 use tauri::{AppHandle, State, ipc::Channel};
 
-use crate::{apps, builtin};
+use crate::{apps, builtin, rank::Ranker};
 
 #[derive(Clone, Serialize)]
 pub struct Action {
@@ -56,16 +56,15 @@ pub async fn query(
     on_batch: Channel<Batch>,
     engine: State<'_, Engine>,
     index: State<'_, apps::AppIndex>,
+    ranker: State<'_, Ranker>,
 ) -> Result<(), String> {
     engine.begin(id);
-    // One batch per provider, skipped as soon as a newer keystroke takes over.
-    let providers: [&dyn Fn() -> Vec<Item>; 2] =
-        [&|| apps::search(&index, &text), &|| builtin::search(&text)];
-    for provider in providers {
-        if !engine.is_current(id) {
-            break;
-        }
-        let items = provider();
+    // Apps and Seekr's own commands are fast, so they are ranked together into the first batch;
+    // slower providers will append later batches.
+    let mut items = apps::all(&index);
+    items.extend(builtin::all());
+    let items = ranker.rank(&text, items);
+    if engine.is_current(id) {
         on_batch
             .send(Batch { id, items })
             .map_err(|e| e.to_string())?;
@@ -74,14 +73,28 @@ pub async fn query(
 }
 
 #[tauri::command]
-pub fn run_action(app: AppHandle, item: String, action: String) -> Result<(), String> {
+pub fn run_action(
+    app: AppHandle,
+    item: String,
+    action: String,
+    query: String,
+    ranker: State<'_, Ranker>,
+) -> Result<(), String> {
     tracing::info!("run {item} {action}");
+    if let Err(e) = ranker.record(&query, &item) {
+        tracing::error!("could not record use of {item}: {e}");
+    }
     match item.strip_prefix("app:") {
         Some(id) => apps::launch(id)?,
         None => builtin::run(&app, &item, &action)?,
     }
     crate::hide_panel(&app);
     Ok(())
+}
+
+#[tauri::command]
+pub fn toggle_pin(item: String, ranker: State<'_, Ranker>) -> Result<bool, String> {
+    ranker.toggle_pin(&item).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

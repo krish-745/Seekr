@@ -33,7 +33,7 @@ fn logs_dir() -> PathBuf {
     common::data_dir().join("logs")
 }
 
-fn items() -> Vec<Item> {
+pub fn all() -> Vec<Item> {
     let config = config_path().display().to_string();
     let logs = logs_dir().display().to_string();
     vec![
@@ -62,15 +62,6 @@ fn items() -> Vec<Item> {
             actions: vec![QUIT],
         },
     ]
-}
-
-/// shortcut: case-insensitive substring on the title; step 1.4 replaces it with fuzzy ranking.
-pub fn search(text: &str) -> Vec<Item> {
-    let needle = text.trim().to_lowercase();
-    items()
-        .into_iter()
-        .filter(|item| item.title.to_lowercase().contains(&needle))
-        .collect()
 }
 
 pub fn run(app: &AppHandle, item: &str, action: &str) -> Result<(), String> {
@@ -116,15 +107,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_query_lists_everything() {
-        assert_eq!(search("").len(), items().len());
-    }
-
-    #[test]
-    fn filters_by_title_ignoring_case() {
-        let ids: Vec<_> = search("  QUIT ").into_iter().map(|i| i.id).collect();
-        assert_eq!(ids, ["seekr:quit"]);
-        assert!(search("nothing matches this").is_empty());
+    fn every_command_has_a_handled_action() {
+        for item in all() {
+            assert!(!item.actions.is_empty(), "{}", item.id);
+        }
     }
 
     #[test]

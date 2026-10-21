@@ -15,9 +15,10 @@ use tracing_appender::{non_blocking::WorkerGuard, rolling};
 /// The single app-ID constant; renaming the product starts here.
 pub const APP_NAME: &str = "Seekr";
 
-/// `%LOCALAPPDATA%\Seekr`: indexes, databases, models, logs.
+/// `%LOCALAPPDATA%\Seekr`: indexes, databases, models, logs. `SEEKR_DATA_DIR` replaces it, so
+/// test runs keep their state apart without moving LOCALAPPDATA, which the shell itself needs.
 pub fn data_dir() -> PathBuf {
-    env_dir("LOCALAPPDATA")
+    std::env::var_os("SEEKR_DATA_DIR").map_or_else(|| env_dir("LOCALAPPDATA"), PathBuf::from)
 }
 
 /// `%APPDATA%\Seekr`: user config.

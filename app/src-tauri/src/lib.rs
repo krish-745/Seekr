@@ -2,6 +2,7 @@ mod apps;
 mod builtin;
 mod hotkey;
 mod query;
+mod rank;
 mod telemetry;
 
 use tauri::{
@@ -56,6 +57,7 @@ fn try_show(app: &AppHandle) -> tauri::Result<()> {
         Some(m) => Some(m),
         None => app.primary_monitor()?,
     };
+    let mut size = None;
     if let Some(m) = monitor {
         let area = m.work_area();
         let (x, y, width, height) = place(
@@ -67,10 +69,17 @@ fn try_show(app: &AppHandle) -> tauri::Result<()> {
         w.set_position(PhysicalPosition::new(x, y))?;
         w.set_size(PhysicalSize::new(width, height))?;
         w.set_position(PhysicalPosition::new(x, y))?;
+        size = Some(PhysicalSize::new(width, height));
     }
     app.state::<Telemetry>().mark_shown();
     apps::refresh(app);
     w.show()?;
+    // The first show of a never-shown undecorated window comes out a caption-height too tall.
+    if let Some(size) = size
+        && w.inner_size()? != size
+    {
+        w.set_size(size)?;
+    }
     w.set_focus()
 }
 
@@ -205,6 +214,12 @@ pub fn run() {
         })
         .manage(Telemetry::default())
         .setup(|app| {
+            let db = common::data_dir().join("seekr.db");
+            let ranker = rank::Ranker::open(&db).unwrap_or_else(|e| {
+                tracing::error!("{} unusable ({e}); usage won't be remembered", db.display());
+                rank::Ranker::in_memory().expect("in-memory SQLite")
+            });
+            app.manage(ranker);
             register_hotkey(app.handle());
             apps::refresh(app.handle());
             build_tray(app)?;
@@ -223,6 +238,7 @@ pub fn run() {
             hide,
             query::query,
             query::run_action,
+            query::toggle_pin,
             telemetry::panel_ready,
             telemetry::record_latency,
         ])

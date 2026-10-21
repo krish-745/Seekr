@@ -18,6 +18,7 @@ function App() {
   let input!: HTMLInputElement;
   let list!: HTMLDivElement;
   const [items, setItems] = createSignal<Item[]>([]);
+  const [query, setQuery] = createSignal("");
   const [selected, setSelected] = createSignal(0);
   const [scrollTop, setScrollTop] = createSignal(0);
   const [viewport, setViewport] = createSignal(0);
@@ -59,6 +60,7 @@ function App() {
   }
 
   function search(text: string) {
+    setQuery(text);
     const id = ++nextId;
     typedAt.set(id, performance.now());
     const onBatch = new Channel<Batch>();
@@ -75,7 +77,13 @@ function App() {
   }
 
   function run(item: Item | undefined, actionId: string | undefined) {
-    if (item && actionId) invoke("run_action", { item: item.id, action: actionId });
+    if (!item || !actionId) return;
+    if (actionId === "pin" || actionId === "unpin") {
+      // Pinning keeps the panel open and re-ranks the current query.
+      invoke("toggle_pin", { item: item.id }).then(() => search(input.value));
+    } else {
+      invoke("run_action", { item: item.id, action: actionId, query: input.value });
+    }
   }
 
   function onKey(e: KeyboardEvent) {
@@ -155,7 +163,7 @@ function App() {
             </For>
           </div>
           <Show when={items().length === 0}>
-            <div class="empty">No results</div>
+            <div class="empty">{query().trim() ? "No results" : "Type to search apps"}</div>
           </Show>
         </div>
         <aside class="preview">

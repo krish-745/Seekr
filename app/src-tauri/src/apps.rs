@@ -57,15 +57,9 @@ pub fn icon_dir() -> PathBuf {
     common::data_dir().join("icons")
 }
 
-/// shortcut: case-insensitive substring on the name; step 1.4 replaces it with fuzzy ranking.
-pub fn search(index: &AppIndex, text: &str) -> Vec<Item> {
-    let needle = text.trim().to_lowercase();
-    if needle.is_empty() {
-        return Vec::new();
-    }
+pub fn all(index: &AppIndex) -> Vec<Item> {
     let apps = index.apps.read().unwrap();
     apps.iter()
-        .filter(|app| app.name.to_lowercase().contains(&needle))
         .map(|app| Item {
             id: format!("app:{}", app.id),
             title: app.name.clone(),
@@ -302,10 +296,5 @@ mod tests {
     fn fnv1a_is_stable() {
         assert_eq!(fnv1a(""), 0xcbf2_9ce4_8422_2325);
         assert_eq!(fnv1a("a"), 0xaf63_dc4c_8601_ec8c);
-    }
-
-    #[test]
-    fn empty_query_returns_no_apps() {
-        assert!(search(&AppIndex::default(), "  ").is_empty());
     }
 }
