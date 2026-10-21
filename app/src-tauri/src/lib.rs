@@ -279,6 +279,11 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // Alt+F4 or a WM_CLOSE would destroy the only window and quit; Quit is in the tray.
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                log_err("hide", window.hide());
+            }
             if let WindowEvent::Focused(false) = event {
                 log_err("hide", window.hide());
                 window.state::<Telemetry>().flush();

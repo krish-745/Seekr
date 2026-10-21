@@ -236,19 +236,25 @@ function App() {
         </Show>
       </div>
       <footer class="hints">
-        <Show when={confirming()}>
+        <Show
+          when={confirming()}
+          fallback={
+            <>
+              <Show when={current()?.actions[0]}>{(a) => <span><kbd>↵</kbd> {a().label}</span>}</Show>
+              <Show when={current()?.actions[1]}>{(a) => <span><kbd>Ctrl+↵</kbd> {a().label}</span>}</Show>
+              <Show when={(current()?.actions.length ?? 0) > 0}>
+                <span><kbd>Tab</kbd> Actions</span>
+              </Show>
+              <span><kbd>Esc</kbd> {actionsOpen() ? "Back" : "Close"}</span>
+            </>
+          }
+        >
           {(item) => (
             <span class="confirm">
               <kbd>↵</kbd> Move {item().title} to the Recycle Bin · any other key cancels
             </span>
           )}
         </Show>
-        <Show when={current()?.actions[0]}>{(a) => <span><kbd>↵</kbd> {a().label}</span>}</Show>
-        <Show when={current()?.actions[1]}>{(a) => <span><kbd>Ctrl+↵</kbd> {a().label}</span>}</Show>
-        <Show when={(current()?.actions.length ?? 0) > 0}>
-          <span><kbd>Tab</kbd> Actions</span>
-        </Show>
-        <span><kbd>Esc</kbd> {actionsOpen() ? "Back" : "Close"}</span>
       </footer>
     </main>
   );
