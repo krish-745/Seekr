@@ -51,8 +51,9 @@ const END_TASK: Action = Action {
 };
 
 /// `win` or `win <words>`.
-pub fn mode(text: &str) -> Option<&str> {
-    let rest = text.trim_start().strip_prefix("win")?;
+/// `<prefix> words`: `word` is the window switcher's prefix from config.toml.
+pub fn mode<'a>(text: &'a str, word: &str) -> Option<&'a str> {
+    let rest = text.trim_start().strip_prefix(word)?;
     rest.starts_with(' ').then(|| rest.trim())
 }
 
@@ -269,9 +270,10 @@ mod tests {
 
     #[test]
     fn mode_and_matching() {
-        assert_eq!(mode("win "), Some(""));
-        assert_eq!(mode("win code seekr"), Some("code seekr"));
-        assert_eq!(mode("windows"), None);
+        assert_eq!(mode("win ", "win"), Some(""));
+        assert_eq!(mode("win code seekr", "win"), Some("code seekr"));
+        assert_eq!(mode("windows", "win"), None);
+        assert_eq!(mode("w code", "w"), Some("code"));
         let words = |t: &str| t.split_whitespace().map(String::from).collect::<Vec<_>>();
         let program = r"C:\Program Files\Microsoft VS Code\Code.exe";
         assert!(matches(

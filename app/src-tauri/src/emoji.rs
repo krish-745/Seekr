@@ -100,12 +100,13 @@ struct Glyph {
 }
 
 /// `:words` or `emoji words`.
-pub fn mode(text: &str) -> Option<&str> {
+/// `:words` or `<prefix> words`: `word` is the emoji prefix from config.toml.
+pub fn mode<'a>(text: &'a str, word: &str) -> Option<&'a str> {
     let text = text.trim_start();
     if let Some(rest) = text.strip_prefix(':') {
         return Some(rest.trim());
     }
-    let rest = text.strip_prefix("emoji")?;
+    let rest = text.strip_prefix(word)?;
     rest.starts_with(' ').then(|| rest.trim())
 }
 
@@ -296,9 +297,9 @@ mod tests {
 
     #[test]
     fn finds_emoji_and_symbols_by_name_keyword_and_shortcode() {
-        assert_eq!(mode(":fire"), Some("fire"));
-        assert_eq!(mode("emoji party popper"), Some("party popper"));
-        assert_eq!(mode("emojis"), None);
+        assert_eq!(mode(":fire", "emoji"), Some("fire"));
+        assert_eq!(mode("emoji party popper", "emoji"), Some("party popper"));
+        assert_eq!(mode("emojis", "emoji"), None);
         assert_eq!(first("fire"), "🔥");
         let hearts = items("heart on fire");
         assert_eq!(

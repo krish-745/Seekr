@@ -89,6 +89,11 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         tracing::warn!("quarantined {path}: a run stopped while reading it");
     }
     let folders = common::content::folders();
+    // Read at each run, so a changed exclusion or battery setting applies to the next pass.
+    let config = common::Config::load().unwrap_or_else(|e| {
+        tracing::warn!("config.toml not applied: {e}");
+        common::Config::default()
+    });
     let embed = embed::available(Weights::Full);
     if !embed {
         tracing::info!("no embedding model installed; meaning search stays off");
@@ -108,6 +113,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         files_seen: 0,
         paused: false,
         reported: Instant::now(),
+        config,
     };
     let started = Instant::now();
     let outcome = if std::env::args().any(|a| a == "--stdin") {
@@ -165,6 +171,8 @@ struct Run<'a> {
     /// Set once the user pauses indexing: no more files are read and nothing is dropped.
     paused: bool,
     reported: Instant,
+    /// For `exclude` and `embed_on_battery`.
+    config: common::Config,
 }
 
 impl Run<'_> {
@@ -204,7 +212,9 @@ impl Run<'_> {
             if !inside(folders, path) {
                 continue;
             }
-            if path.exists() && !eligible(path) {
+            if path.exists()
+                && (!eligible(path) || self.config.excludes(&path.display().to_string()))
+            {
                 continue;
             }
             if path.is_dir() {
@@ -237,7 +247,10 @@ impl Run<'_> {
     /// Indexes every eligible file under `root`, honouring .gitignore and skipping hidden and
     /// junk folders; links and junctions are never followed.
     fn walk(&mut self, root: &Path, seen: &mut HashSet<String>) -> Result<(), Hung> {
-        for entry in walker(root).build().flatten() {
+        if self.config.excludes(&root.display().to_string()) {
+            return Ok(());
+        }
+        for entry in walker(root, &self.config.exclude).build().flatten() {
             if entry.file_type().is_some_and(|t| t.is_file()) {
                 seen.insert(entry.path().display().to_string());
                 self.file(entry.path())?;
@@ -338,7 +351,7 @@ impl Run<'_> {
             return;
         }
         let bulk = self.pending.len() >= BULK;
-        if bulk && common::on_battery() {
+        if bulk && !self.config.embed_on_battery && common::on_battery() {
             tracing::info!(
                 "on battery: {} passages wait for mains power",
                 self.pending.len()
@@ -490,16 +503,22 @@ fn inside(folders: &[PathBuf], path: &Path) -> bool {
 }
 
 /// The walk every pass uses: .gitignore files in the folder and above it apply (git repo or
-/// not), hidden entries and junk folders are skipped, and links are never followed.
-fn walker(root: &Path) -> ignore::WalkBuilder {
+/// not), hidden entries, junk folders and what config.toml leaves out are skipped, and links
+/// are never followed.
+fn walker(root: &Path, exclude: &[String]) -> ignore::WalkBuilder {
+    let config = common::Config {
+        exclude: exclude.to_vec(),
+        ..Default::default()
+    };
     let mut builder = ignore::WalkBuilder::new(root);
     builder
         .follow_links(false)
         .require_git(false)
         .git_global(false)
-        .filter_entry(|e| {
+        .filter_entry(move |e| {
             let name = e.file_name().to_string_lossy().to_lowercase();
-            !(e.file_type().is_some_and(|t| t.is_dir()) && JUNK.contains(&name.as_str()))
+            let junk = e.file_type().is_some_and(|t| t.is_dir()) && JUNK.contains(&name.as_str());
+            !junk && !config.excludes(&e.path().display().to_string())
         });
     builder
 }
@@ -566,6 +585,27 @@ mod tests {
         );
         assert!(!eligible(&root.join("b.log")));
         assert!(eligible(&root.join("c.txt")));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+    #[test]
+    fn the_walk_leaves_out_excluded_names_and_folders() {
+        let root = std::env::temp_dir().join(format!("seekr-exclude-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for dir in ["keep", "private", r"keep\drafts"] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+            std::fs::write(root.join(dir).join("a.txt"), "x").unwrap();
+        }
+        let exclude = [
+            "private".to_string(),
+            root.join(r"keep\drafts").display().to_string(),
+        ];
+        let found: Vec<String> = walker(&root, &exclude)
+            .build()
+            .flatten()
+            .filter(|e| e.file_type().is_some_and(|t| t.is_file()))
+            .map(|e| e.path().strip_prefix(&root).unwrap().display().to_string())
+            .collect();
+        assert_eq!(found, [r"keep\a.txt"]);
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

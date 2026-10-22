@@ -19,13 +19,14 @@ mod preview;
 mod query;
 mod rank;
 mod rates;
+mod settings;
 mod switcher;
 mod system;
 mod telemetry;
 mod web;
 
 use tauri::{
-    AppHandle, Manager, PhysicalPosition, PhysicalSize, WindowEvent,
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WindowEvent,
     menu::{CheckMenuItem, Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
@@ -159,15 +160,18 @@ fn log_err<T>(what: &str, result: tauri::Result<T>) {
     }
 }
 
-fn register_hotkey(app: &AppHandle) {
+/// Moves the panel's hotkey after config.toml changed it.
+// shortcut: if the old hotkey fell back to the keyboard hook, that hook stays until Seekr
+// restarts, so both keys open the panel until then.
+pub(crate) fn set_hotkey(app: &AppHandle, old: &str, new: &str) {
+    if let Ok(old) = old.parse::<Shortcut>() {
+        let _ = app.global_shortcut().unregister(old);
+    }
+    register_hotkey(app, new);
+}
+
+fn register_hotkey(app: &AppHandle, hotkey: &str) {
     let default = common::Config::default().hotkey;
-    let hotkey = match common::Config::load() {
-        Ok(cfg) => cfg.hotkey,
-        Err(e) => {
-            tracing::error!("config.toml ignored: {e}");
-            default.clone()
-        }
-    };
     let shortcut: Shortcut = hotkey.parse().unwrap_or_else(|e| {
         tracing::error!("hotkey {hotkey:?} is invalid ({e}); using {default}");
         default.parse().expect("default hotkey parses")
@@ -189,8 +193,9 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open Seekr", true, None::<&str>)?;
     let login =
         CheckMenuItem::with_id(app, "login", "Start at login", true, at_login, None::<&str>)?;
+    let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &login, &quit])?;
+    let menu = Menu::with_items(app, &[&open, &settings, &login, &quit])?;
     let icon = app
         .default_window_icon()
         .cloned()
@@ -202,6 +207,10 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| match event.id.as_ref() {
             "open" => show(app),
+            "settings" => {
+                show(app);
+                log_err("open settings", app.emit("open-settings", ()));
+            }
             "login" => set_autostart(app, &login),
             "quit" => app.exit(0),
             _ => {}
@@ -299,16 +308,14 @@ pub fn run() {
             app.manage(ranker);
             files::start(app.handle());
             clips::start(app.handle());
-            let config = common::Config::load().unwrap_or_else(|e| {
-                tracing::error!("config.toml unreadable ({e}); using defaults");
-                common::Config::default()
-            });
+            let config = settings::get();
             app.manage(web::Web::new(&config.shortcuts, &config.search));
             app.manage(ai::Ai::new(&config));
+            settings::start(app.handle());
             ai::start_reaper(app.handle());
             indexer::start(app.handle());
             content::start_reaper(app.handle());
-            register_hotkey(app.handle());
+            register_hotkey(app.handle(), &config.hotkey);
             apps::refresh(app.handle());
             build_tray(app)?;
             if !std::env::args().any(|a| a == HIDDEN_ARG) {
@@ -340,6 +347,8 @@ pub fn run() {
             notes::save_note_text,
             query::toggle_pin,
             preview::preview,
+            settings::settings,
+            settings::save_setting,
             aisetup::ai_setup,
             aisetup::install_ai,
             aisetup::cancel_ai_setup,

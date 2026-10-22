@@ -65,13 +65,13 @@ fn dir() -> Result<PathBuf, String> {
 }
 
 /// `note` or `note <text>`.
-pub fn note_mode(text: &str) -> Option<&str> {
-    word_mode(text, "note")
+pub fn note_mode<'a>(text: &'a str, word: &str) -> Option<&'a str> {
+    word_mode(text, word)
 }
 
 /// `todo` or `todo <task>`.
-pub fn todo_mode(text: &str) -> Option<&str> {
-    word_mode(text, "todo")
+pub fn todo_mode<'a>(text: &'a str, word: &str) -> Option<&'a str> {
+    word_mode(text, word)
 }
 
 fn word_mode<'a>(text: &'a str, word: &str) -> Option<&'a str> {
@@ -397,9 +397,10 @@ fn add_todo(text: &str, today: NaiveDate) -> Result<(), String> {
 
 pub fn run(app: &AppHandle, id: &str, action: &str, query: &str) -> Result<(), String> {
     let today = Local::now().date_naive();
+    let prefixes = &crate::settings::get().prefixes;
     match (id, action) {
         ("new", "noteadd") => {
-            let text = note_mode(query).unwrap_or("");
+            let text = note_mode(query, &prefixes.note).unwrap_or("");
             if text.is_empty() {
                 return Err("nothing to save".into());
             }
@@ -407,7 +408,7 @@ pub fn run(app: &AppHandle, id: &str, action: &str, query: &str) -> Result<(), S
             crate::hide_panel(app, true);
             paste::toast("Note saved");
         }
-        ("new", "todoadd") => add_todo(todo_mode(query).unwrap_or(""), today)?,
+        ("new", "todoadd") => add_todo(todo_mode(query, &prefixes.todo).unwrap_or(""), today)?,
         (_, "todofile") => {
             crate::hide_panel(app, false);
             tauri_plugin_opener::OpenerExt::opener(app)
@@ -440,11 +441,12 @@ mod tests {
 
     #[test]
     fn modes() {
-        assert_eq!(note_mode("note"), Some(""));
-        assert_eq!(note_mode("note buy milk"), Some("buy milk"));
-        assert_eq!(note_mode("notepad"), None);
-        assert_eq!(todo_mode("todo "), Some(""));
-        assert_eq!(todo_mode("todos"), None);
+        assert_eq!(note_mode("note", "note"), Some(""));
+        assert_eq!(note_mode("note buy milk", "note"), Some("buy milk"));
+        assert_eq!(note_mode("notepad", "note"), None);
+        assert_eq!(todo_mode("todo ", "todo"), Some(""));
+        assert_eq!(todo_mode("todos", "todo"), None);
+        assert_eq!(todo_mode("t call", "t"), Some("call"));
     }
 
     #[test]

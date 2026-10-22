@@ -63,7 +63,6 @@ const FOLLOW_UP_BUDGET: usize = 6_000;
 const FILE_BUDGET: usize = 16_000;
 const CONTEXT_TOKENS: &str = "8192";
 const MAX_ANSWER_TOKENS: u32 = 600;
-const IDLE: Duration = Duration::from_secs(10 * 60);
 pub(crate) const RUNTIME: &str = r"llm\llama.cpp-b11819\llama-server.exe";
 const MODELS: &str = r"llm\models";
 const DEFAULT_MODEL: &str = "Qwen3.5-4B-Q4_K_M";
@@ -151,12 +150,19 @@ struct Chat {
     messages: Vec<(String, String)>,
 }
 
-pub struct Ai {
+/// The models config.toml picks, changed when it is saved.
+struct Picked {
     /// The local model's file name, for questions about files.
     model: String,
     /// The cloud API for general questions, by name ("" for whichever has a key), and its model.
     api: String,
     api_model: String,
+    /// How long the local model stays loaded without a question.
+    idle: Duration,
+}
+
+pub struct Ai {
+    picked: Mutex<Picked>,
     server: Mutex<Option<Server>>,
     used: Mutex<Instant>,
     chat: Mutex<Chat>,
@@ -168,20 +174,8 @@ pub struct Ai {
 
 impl Ai {
     pub fn new(config: &common::Config) -> Self {
-        if !config.api.is_empty() && !APIS.iter().any(|a| a.name == config.api) {
-            tracing::warn!(
-                "api = {:?} isn't known; using whichever key is set",
-                config.api
-            );
-        }
         Self {
-            model: if config.ai_model.is_empty() {
-                DEFAULT_MODEL.to_string()
-            } else {
-                config.ai_model.clone()
-            },
-            api: config.api.clone(),
-            api_model: config.api_model.clone(),
+            picked: Mutex::new(Self::pick(config)),
             server: Mutex::new(None),
             used: Mutex::new(Instant::now()),
             chat: Mutex::default(),
@@ -190,23 +184,60 @@ impl Ai {
         }
     }
 
+    fn pick(config: &common::Config) -> Picked {
+        if !config.api.is_empty() && !APIS.iter().any(|a| a.name == config.api) {
+            tracing::warn!(
+                "api = {:?} isn't known; using whichever key is set",
+                config.api
+            );
+        }
+        Picked {
+            model: if config.ai_model.is_empty() {
+                DEFAULT_MODEL.to_string()
+            } else {
+                config.ai_model.clone()
+            },
+            api: config.api.clone(),
+            api_model: config.api_model.clone(),
+            idle: Duration::from_secs(u64::from(config.ai_idle_minutes) * 60),
+        }
+    }
+
+    /// Takes up a changed config.toml; a different local model starts with the next question.
+    pub fn apply(&self, config: &common::Config) {
+        let picked = Self::pick(config);
+        let mut current = self.picked.lock().unwrap();
+        if picked.model != current.model {
+            *self.server.lock().unwrap() = None;
+        }
+        *current = picked;
+    }
+
+    fn model(&self) -> String {
+        self.picked.lock().unwrap().model.clone()
+    }
+
     /// The cloud API for general questions, its model and key: the one config.toml names, or
     /// else the first whose key is set. Keys are read at each question, so one set after Seekr
     /// started works without a restart.
     fn cloud(&self) -> Result<(&'static Api, String, String), String> {
+        let (chosen, api_model) = {
+            let picked = self.picked.lock().unwrap();
+            (picked.api.clone(), picked.api_model.clone())
+        };
         let api = APIS
             .iter()
-            .find(|a| a.name == self.api)
+            .find(|a| a.name == chosen)
             .or_else(|| APIS.iter().find(|a| user_env(a.key).is_some()))
             .ok_or(
                 "set GEMINI_API_KEY or GROQ_API_KEY in your environment for general questions",
             )?;
         let key = user_env(api.key)
             .ok_or_else(|| format!("{} isn't set in your environment", api.key))?;
-        let model = if self.api_model.is_empty() {
+        let model = if api_model.is_empty() {
             api.model.to_string()
         } else {
-            self.api_model.clone()
+            api_model
         };
         Ok((api, model, key))
     }
@@ -241,8 +272,9 @@ pub fn items(app: &AppHandle, general: bool, question: &str) -> Vec<Item> {
             sent, never your files. Ask a follow-up with ?? again; Esc stops an answer.";
         (title, subtitle, preview)
     } else {
-        let subtitle = if model_path(&ai.model).exists() && runtime().exists() {
-            format!("Your files · on this PC · {}", ai.model.replace('-', " "))
+        let model = ai.model();
+        let subtitle = if model_path(&model).exists() && runtime().exists() {
+            format!("Your files · on this PC · {}", model.replace('-', " "))
         } else {
             actions = vec![SET_UP];
             "The AI model isn't on this PC yet: Enter sets it up (a 3.3 GB download)".to_string()
@@ -385,7 +417,7 @@ fn answer(
         )
         .collect();
     // Questions about files only ever go to the model on this PC.
-    let (port, key) = local_server(ai, &ai.model, &send)?;
+    let (port, key) = local_server(ai, &ai.model(), &send)?;
     let mut body = json!({
         "chat_template_kwargs": {"enable_thinking": false},
         "cache_prompt": true,
@@ -755,7 +787,7 @@ fn kill_with_seekr(pid: u32) -> windows::core::Result<HANDLE> {
     }
 }
 
-/// Stops the local model once it has been idle for ten minutes, handing the GPU back.
+/// Stops the local model once it has been idle for `ai_idle_minutes`, handing the GPU back.
 pub fn start_reaper(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
@@ -764,13 +796,14 @@ pub fn start_reaper(app: &AppHandle) {
             let Some(ai) = app.try_state::<Ai>() else {
                 return;
             };
-            let idle = ai.used.lock().unwrap().elapsed() > IDLE;
+            let limit = ai.picked.lock().unwrap().idle;
+            let idle = ai.used.lock().unwrap().elapsed() > limit;
             let mut server = ai.server.lock().unwrap();
             if idle && server.is_some() {
                 *server = None;
                 tracing::info!(
                     "AI model stopped after {} idle minutes",
-                    IDLE.as_secs() / 60
+                    limit.as_secs() / 60
                 );
             }
         }

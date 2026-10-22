@@ -9,7 +9,7 @@ use std::{
     os::windows::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     sync::{
-        Mutex,
+        Mutex, RwLock,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -82,6 +82,7 @@ const BROWSERS: &[(&str, &str)] = &[
     ("Edge", r"Microsoft\Edge\User Data"),
 ];
 
+#[derive(Clone)]
 struct Shortcut {
     key: String,
     name: String,
@@ -105,10 +106,14 @@ struct Pages {
     read: Option<Instant>,
 }
 
-pub struct Web {
+struct Engines {
     shortcuts: Vec<Shortcut>,
     /// The shortcut the "Search the web" row uses.
     search: String,
+}
+
+pub struct Web {
+    engines: RwLock<Engines>,
     pages: Mutex<Pages>,
     reading: AtomicBool,
 }
@@ -116,6 +121,19 @@ pub struct Web {
 impl Web {
     /// The built-in shortcuts with the user's added or replaced ones.
     pub fn new(extra: &BTreeMap<String, String>, search: &str) -> Self {
+        Self {
+            engines: RwLock::new(Self::engines(extra, search)),
+            pages: Mutex::default(),
+            reading: AtomicBool::new(false),
+        }
+    }
+
+    /// Takes up shortcuts changed in config.toml.
+    pub fn set_shortcuts(&self, extra: &BTreeMap<String, String>, search: &str) {
+        *self.engines.write().unwrap() = Self::engines(extra, search);
+    }
+
+    fn engines(extra: &BTreeMap<String, String>, search: &str) -> Engines {
         let mut shortcuts: Vec<Shortcut> = DEFAULT_SHORTCUTS
             .iter()
             .filter(|(key, ..)| !extra.contains_key(*key))
@@ -142,16 +160,12 @@ impl Web {
         } else {
             "g".to_string()
         };
-        Self {
-            shortcuts,
-            search,
-            pages: Mutex::default(),
-            reading: AtomicBool::new(false),
-        }
+        Engines { shortcuts, search }
     }
 
-    fn shortcut(&self, key: &str) -> Option<&Shortcut> {
-        self.shortcuts.iter().find(|s| s.key == key)
+    fn shortcut(&self, key: &str) -> Option<Shortcut> {
+        let engines = self.engines.read().unwrap();
+        engines.shortcuts.iter().find(|s| s.key == key).cloned()
     }
 
     /// "g rust tauri": the search it names, as the first result.
@@ -161,7 +175,7 @@ impl Web {
         };
         let words = words.trim();
         match self.shortcut(&key.to_lowercase()) {
-            Some(s) if !words.is_empty() => vec![search_item(s, words)],
+            Some(s) if !words.is_empty() => vec![search_item(&s, words)],
             _ => Vec::new(),
         }
     }
@@ -172,8 +186,9 @@ impl Web {
         if words.is_empty() {
             return None;
         }
-        let s = self.shortcut(&self.search)?;
-        let mut item = search_item(s, words);
+        let search = self.engines.read().unwrap().search.clone();
+        let s = self.shortcut(&search)?;
+        let mut item = search_item(&s, words);
         item.title = format!("Search the web for “{words}”");
         Some(item)
     }
@@ -463,7 +478,13 @@ mod tests {
         assert_eq!(fallback.id, "url:https://duckduckgo.com/?q=best+biryani");
         assert_eq!(fallback.title, "Search the web for “best biryani”");
         assert!(web.fallback("  ").is_none());
-        assert_eq!(Web::new(&BTreeMap::new(), "nope").search, "g");
+        let web = Web::new(&BTreeMap::new(), "nope");
+        assert_eq!(web.engines.read().unwrap().search, "g");
+        web.set_shortcuts(
+            &BTreeMap::from([("jira".into(), "https://j.example/%s".into())]),
+            "jira",
+        );
+        assert_eq!(web.engines.read().unwrap().search, "jira");
     }
 
     #[test]

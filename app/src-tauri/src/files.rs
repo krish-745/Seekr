@@ -402,6 +402,7 @@ pub fn search(
     let profile = std::env::var("USERPROFILE")
         .unwrap_or_default()
         .to_lowercase();
+    let config = crate::settings::get();
     let mut scored: Vec<(f64, String, &Index, u32)> = hits
         .into_iter()
         .map(|(drive, hit)| {
@@ -412,6 +413,7 @@ pub fn search(
                 + boosts.score(&format!("path:{path}"));
             (score, path, index, hit.entry)
         })
+        .filter(|(_, path, ..)| !config.excludes(path))
         .collect();
     scored.sort_by(|(a, x, ..), (b, y, ..)| b.total_cmp(a).then(x.len().cmp(&y.len())));
     let items = scored

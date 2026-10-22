@@ -35,7 +35,7 @@ fn env_dir(var: &str) -> PathBuf {
 }
 
 /// User settings from `config.toml`; every field is optional.
-#[derive(Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub hotkey: String,
@@ -50,6 +50,70 @@ pub struct Config {
     pub ai_model: String,
     /// The cloud API's model; empty for its default.
     pub api_model: String,
+    /// Left out of file and content results: full folder paths, or names that match any part
+    /// of a path (a folder or file name, such as `node_modules`).
+    pub exclude: Vec<String>,
+    /// Tools that can be turned off.
+    pub tools: Tools,
+    /// The words that open a tool's list.
+    pub prefixes: Prefixes,
+    /// Clipboard history keeps entries this many days, and at most this many (pinned ones stay).
+    pub clipboard_days: u32,
+    pub clipboard_entries: u32,
+    /// The local AI model is unloaded after this many minutes without a question.
+    pub ai_idle_minutes: u32,
+    /// Index content meaning on battery too; by default a big pass waits for mains power.
+    pub embed_on_battery: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Tools {
+    pub calculator: bool,
+    pub clipboard: bool,
+    pub windows: bool,
+    pub system: bool,
+    pub web: bool,
+    pub emoji: bool,
+    pub notes: bool,
+    pub ai: bool,
+}
+
+impl Default for Tools {
+    fn default() -> Self {
+        Self {
+            calculator: true,
+            clipboard: true,
+            windows: true,
+            system: true,
+            web: true,
+            emoji: true,
+            notes: true,
+            ai: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Prefixes {
+    pub clipboard: String,
+    pub windows: String,
+    pub emoji: String,
+    pub note: String,
+    pub todo: String,
+}
+
+impl Default for Prefixes {
+    fn default() -> Self {
+        Self {
+            clipboard: "clip".into(),
+            windows: "win".into(),
+            emoji: "emoji".into(),
+            note: "note".into(),
+            todo: "todo".into(),
+        }
+    }
 }
 
 impl Default for Config {
@@ -61,6 +125,13 @@ impl Default for Config {
             api: String::new(),
             ai_model: String::new(),
             api_model: String::new(),
+            exclude: Vec::new(),
+            tools: Tools::default(),
+            prefixes: Prefixes::default(),
+            clipboard_days: 30,
+            clipboard_entries: 1_000,
+            ai_idle_minutes: 10,
+            embed_on_battery: false,
         }
     }
 }
@@ -72,13 +143,54 @@ impl Config {
 
     /// A missing file means defaults; a malformed one is an error, never silently ignored.
     pub fn load_from(path: &Path) -> io::Result<Self> {
-        match fs::read_to_string(path) {
-            Ok(text) => {
-                toml::from_str(&text).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+        let invalid = |e: String| io::Error::new(io::ErrorKind::InvalidData, e);
+        let config: Self = match fs::read_to_string(path) {
+            Ok(text) => toml::from_str(&text).map_err(|e| invalid(e.to_string()))?,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(e) => return Err(e),
+        };
+        config.check().map_err(invalid)?;
+        Ok(config)
+    }
+
+    /// What TOML can't say: prefixes are single words, distinct, and counts aren't zero.
+    pub fn check(&self) -> Result<(), String> {
+        let p = &self.prefixes;
+        let words = [&p.clipboard, &p.windows, &p.emoji, &p.note, &p.todo];
+        for (i, word) in words.iter().enumerate() {
+            if word.is_empty() || word.contains(char::is_whitespace) || word.starts_with(['?', ':'])
+            {
+                return Err(format!(
+                    "prefix {word:?} must be one word, not starting with ? or :"
+                ));
             }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(e) => Err(e),
+            if words[..i].iter().any(|w| w.eq_ignore_ascii_case(word)) {
+                return Err(format!("prefix {word:?} is used twice"));
+            }
         }
+        if self.clipboard_days == 0 || self.clipboard_entries == 0 || self.ai_idle_minutes == 0 {
+            return Err(
+                "clipboard_days, clipboard_entries and ai_idle_minutes must be above 0".into(),
+            );
+        }
+        Ok(())
+    }
+
+    /// Whether `path` is inside an excluded folder or has an excluded name as one of its parts.
+    // shortcut: plain names and folder paths only, no wildcards; add globs if people ask.
+    pub fn excludes(&self, path: &str) -> bool {
+        let lower = path.replace('/', "\\").to_lowercase();
+        self.exclude.iter().any(|entry| {
+            let entry = entry.trim().replace('/', "\\").to_lowercase();
+            let entry = entry.trim_end_matches('\\');
+            if entry.is_empty() {
+                false
+            } else if entry.contains('\\') || entry.contains(':') {
+                lower == entry || lower.starts_with(&format!("{entry}\\"))
+            } else {
+                lower.split('\\').any(|part| part == entry)
+            }
+        })
     }
 }
 
@@ -148,6 +260,54 @@ mod tests {
     fn reads_hotkey() {
         let path = write_temp("hotkey", "hotkey = \"Win+Space\"");
         assert_eq!(Config::load_from(&path).unwrap().hotkey, "Win+Space");
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn excludes_folders_and_names() {
+        let cfg = Config {
+            exclude: vec![
+                r"C:\Users\me\Big\".into(),
+                "node_modules".into(),
+                " ".into(),
+            ],
+            ..Default::default()
+        };
+        assert!(cfg.excludes(r"C:\Users\me\Big"));
+        assert!(cfg.excludes(r"c:\users\me\big\a.txt"));
+        assert!(!cfg.excludes(r"C:\Users\me\Bigger\a.txt"));
+        assert!(cfg.excludes(r"D:\code\app\node_modules\x\index.js"));
+        assert!(!cfg.excludes(r"D:\code\app\node_modules_old\index.js"));
+        assert!(!Config::default().excludes(r"C:\anything"));
+    }
+
+    #[test]
+    fn reads_tables_and_checks_them() {
+        let path = write_temp(
+            "tables",
+            "clipboard_days = 7\n[tools]\nemoji = false\n[prefixes]\nclipboard = \"cb\"",
+        );
+        let cfg = Config::load_from(&path).unwrap();
+        assert_eq!(
+            (cfg.clipboard_days, cfg.tools.emoji, cfg.tools.web),
+            (7, false, true)
+        );
+        assert_eq!(
+            (cfg.prefixes.clipboard.as_str(), cfg.prefixes.todo.as_str()),
+            ("cb", "todo")
+        );
+        for bad in [
+            "[prefixes]\nnote = \"todo\"",
+            "[prefixes]\nwindows = \"my win\"",
+            "ai_idle_minutes = 0",
+        ] {
+            fs::write(&path, bad).unwrap();
+            assert_eq!(
+                Config::load_from(&path).unwrap_err().kind(),
+                io::ErrorKind::InvalidData,
+                "{bad}"
+            );
+        }
         fs::remove_file(path).unwrap();
     }
 

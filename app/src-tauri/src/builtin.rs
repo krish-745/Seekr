@@ -58,8 +58,15 @@ const SETUP: Action = Action {
     label: "Choose folders",
 };
 
-const CONFIG_TEMPLATE: &str = "\
-# Seekr settings. Every key is optional; changes apply after restarting Seekr.
+/// The panel opens its settings view for this one; Rust never sees it.
+const SETTINGS: Action = Action {
+    id: "settings",
+    label: "Open",
+};
+
+pub(crate) const CONFIG_TEMPLATE: &str = "\
+# Seekr settings. Every key is optional; saved changes apply within two seconds.
+# The Settings command in Seekr changes most of these for you.
 # hotkey = \"Alt+Space\"
 #
 # The web shortcut for \"Search the web\": g, ddg, b, or one of yours.
@@ -71,10 +78,30 @@ const CONFIG_TEMPLATE: &str = "\
 # ai_model = \"Qwen3.5-9B-IQ4_XS\"
 # api = \"gemini\"
 # api_model = \"gemini-3.5-flash\"
+# The local model unloads after this many minutes without a question.
+# ai_idle_minutes = 10
+#
+# Clipboard history keeps entries this many days, and at most this many (pinned ones stay).
+# clipboard_days = 30
+# clipboard_entries = 1000
+#
+# Left out of file and content results: folder paths, or names such as node_modules.
+# exclude = [\"node_modules\", 'C:\\Users\\you\\Downloads\\Big']
+#
+# Index meaning on battery too; by default a big pass waits for mains power.
+# embed_on_battery = true
 #
 # Web shortcuts: type the key, a space and your words. %s is where the words go.
 # [shortcuts]
 # jira = \"https://example.atlassian.net/browse/%s\"
+#
+# Tools to turn off: calculator, clipboard, windows, system, web, emoji, notes, ai.
+# [tools]
+# emoji = false
+#
+# The words that open a list: clipboard, windows, emoji, note, todo.
+# [prefixes]
+# clipboard = \"cb\"
 ";
 
 fn config_path() -> PathBuf {
@@ -85,15 +112,39 @@ fn logs_dir() -> PathBuf {
     common::data_dir().join("logs")
 }
 
+/// Seekr's commands, without those that open a tool turned off in config.toml.
 pub fn all() -> Vec<Item> {
+    let tools = crate::settings::get().tools.clone();
+    let mut items = commands();
+    items.retain(|item| match item.id.as_str() {
+        "seekr:ask" => tools.ai,
+        "seekr:notes" | "seekr:todos" => tools.notes,
+        "seekr:emoji" => tools.emoji,
+        "seekr:windows" => tools.windows,
+        "seekr:clipboard" => tools.clipboard,
+        _ => true,
+    });
+    items
+}
+
+fn commands() -> Vec<Item> {
     let config = config_path().display().to_string();
     let logs = logs_dir().display().to_string();
     vec![
         Item {
+            id: "seekr:settings".into(),
+            title: "Seekr settings".into(),
+            subtitle: "Hotkey, tools, prefixes, exclusions, clipboard, AI".into(),
+            preview: "Change Seekr's settings here; they are saved to config.toml and apply at once.".into(),
+            icon: None,
+            line: None,
+            actions: vec![SETTINGS],
+        },
+        Item {
             id: "seekr:config".into(),
             title: "Open Seekr config".into(),
             subtitle: config.clone(),
-            preview: format!("Edit {config} to change the hotkey, the web search and web shortcuts.\n\n{CONFIG_TEMPLATE}"),
+            preview: format!("Edit {config}; saved changes apply within two seconds.\n\n{CONFIG_TEMPLATE}"),
             icon: None,
             line: None,
             actions: vec![OPEN, REVEAL],

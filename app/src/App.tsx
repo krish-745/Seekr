@@ -1,4 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { createEffect, createMemo, createSignal, For, Match, on, onMount, Show, Switch } from "solid-js";
 import {
   applyBatches,
@@ -37,14 +38,36 @@ const CONFIRM: Record<string, (item: Item) => string> = {
   killfrozen: () => "End every app that isn't responding",
   endtask: (item) => `End ${item.title}`,
 };
-/** Commands that open a list by typing its prefix. */
+/** Commands that open a list by typing its prefix, and the setting that holds the prefix. */
 const PREFIXES: Record<string, string> = {
-  cliphistory: "clip ",
-  switchwindows: "win ",
-  emojimode: "emoji ",
-  notesmode: "note ",
-  todosmode: "todo ",
+  cliphistory: "prefixes.clipboard",
+  switchwindows: "prefixes.windows",
+  emojimode: "prefixes.emoji",
+  notesmode: "prefixes.note",
+  todosmode: "prefixes.todo",
 };
+
+/** Until the settings arrive. */
+const DEFAULT_PREFIXES: Record<string, string> = {
+  "prefixes.clipboard": "clip",
+  "prefixes.windows": "win",
+  "prefixes.emoji": "emoji",
+  "prefixes.note": "note",
+  "prefixes.todo": "todo",
+};
+
+/** One setting; `kind` is text, number, toggle, choice, lines or action. */
+type Field = {
+  key: string;
+  group: string;
+  label: string;
+  kind: string;
+  value: string | number | boolean;
+  choices?: string[];
+  hint: string;
+};
+type SettingsView = { fields: Field[]; problem: string | null; path: string };
+type SettingsState = { view: SettingsView; index: number; draft?: string; error?: string };
 
 type Source = { n: number; path: string; line: number; name: string };
 type AiEvent =
@@ -112,7 +135,11 @@ function App() {
   const [setupIndex, setSetupIndex] = createSignal(0);
   // The local AI's download screen.
   const [aiSetup, setAiSetup] = createSignal<AiSetupView>();
-  const covered = () => !!setup() || !!aiSetup();
+  const [settingsState, setSettingsState] = createSignal<SettingsState>();
+  // The prefixes in config.toml, refreshed whenever the panel is shown.
+  const [prefixes, setPrefixes] = createSignal<Record<string, string>>({});
+  const covered = () => !!setup() || !!aiSetup() || !!settingsState();
+  const prefix = (key: string) => `${prefixes()[key] ?? DEFAULT_PREFIXES[key]} `;
   let firstRun = false;
   let askedSetup = false;
 
@@ -151,6 +178,61 @@ function App() {
     }
     input.focus();
   }
+  function takePrefixes(view: SettingsView) {
+    setPrefixes(Object.fromEntries(view.fields.filter((f) => f.key.startsWith("prefixes.")).map((f) => [f.key, String(f.value)])));
+  }
+
+  async function openSettings() {
+    setActionsOpen(false);
+    setSetup(undefined);
+    setAiSetup(undefined);
+    const view = await invoke<SettingsView>("settings");
+    takePrefixes(view);
+    setSettingsState({ view, index: 0 });
+  }
+
+  function closeSettings() {
+    setSettingsState(undefined);
+    input.focus();
+    search(input.value);
+  }
+
+  async function saveSetting(field: Field, value: unknown) {
+    const s = settingsState();
+    if (!s) return;
+    try {
+      const view = await invoke<SettingsView>("save_setting", { key: field.key, value });
+      takePrefixes(view);
+      setSettingsState({ ...s, view, draft: undefined, error: undefined });
+    } catch (e) {
+      setSettingsState({ ...s, error: String(e) });
+    }
+  }
+
+  /** Enter on a setting: flips a toggle, steps a choice, opens what an action names, or edits. */
+  function activateSetting() {
+    const s = settingsState();
+    const field = s?.view.fields[s.index];
+    if (!s || !field) return;
+    if (field.kind === "toggle") saveSetting(field, !field.value);
+    else if (field.kind === "choice") {
+      const choices = field.choices ?? [];
+      saveSetting(field, choices[(choices.indexOf(String(field.value)) + 1) % choices.length]);
+    } else if (field.key === "folders") {
+      setSettingsState(undefined);
+      openSetup(false);
+    } else if (field.key === "config") invoke("run_action", { item: "seekr:config", action: "open", query: "" });
+    else setSettingsState({ ...s, draft: String(field.value), error: undefined });
+  }
+
+  function commitDraft() {
+    const s = settingsState();
+    const field = s?.view.fields[s.index];
+    if (!s || !field || s.draft === undefined) return;
+    const number = Number(s.draft.trim());
+    saveSetting(field, field.kind === "number" && s.draft.trim() !== "" && !isNaN(number) ? number : s.draft);
+  }
+
   async function openAiSetup() {
     setActionsOpen(false);
     const info = await invoke<AiSetup>("ai_setup");
@@ -296,6 +378,10 @@ function App() {
       ask(text.slice(general ? 2 : 1).trim(), general);
       return;
     }
+    if (actionId === "settings") {
+      openSettings();
+      return;
+    }
     if (actionId === "aisetup") {
       openAiSetup();
       return;
@@ -322,13 +408,13 @@ function App() {
     if (actionId === "todoadd") {
       // The list comes back with the new to-do in it.
       invoke("run_action", { item: item.id, action: actionId, query: input.value }).then(() => {
-        input.value = "todo ";
+        input.value = prefix("prefixes.todo");
         search(input.value);
       });
       return;
     }
     if (actionId in PREFIXES) {
-      input.value = PREFIXES[actionId];
+      input.value = prefix(PREFIXES[actionId]);
       search(input.value);
       return;
     }
@@ -402,6 +488,23 @@ function App() {
       e.preventDefault();
       return;
     }
+    const s = settingsState();
+    if (s) {
+      const field = s.view.fields[s.index];
+      const last = s.view.fields.length - 1;
+      if (s.draft !== undefined) {
+        // The edit box has the keys, apart from saving and leaving; a list saves on Ctrl+Enter.
+        if (e.key === "Escape") setSettingsState({ ...s, draft: undefined, error: undefined });
+        else if (e.key === "Enter" && (field?.kind !== "lines" || e.ctrlKey)) commitDraft();
+        else return;
+      } else if (e.key === "ArrowDown") setSettingsState({ ...s, index: Math.min(s.index + 1, last), error: undefined });
+      else if (e.key === "ArrowUp") setSettingsState({ ...s, index: Math.max(s.index - 1, 0), error: undefined });
+      else if (e.key === "Enter" || (e.key === " " && field?.kind === "toggle")) activateSetting();
+      else if (e.key === "Escape") closeSettings();
+      else return;
+      e.preventDefault();
+      return;
+    }
     const download = aiSetup();
     if (download) {
       if (e.key === "Enter") installAi();
@@ -471,6 +574,7 @@ function App() {
       input.focus();
       input.select();
       invoke("panel_ready");
+      invoke<SettingsView>("settings").then(takePrefixes);
       if (!askedSetup) {
         askedSetup = true;
         invoke<boolean>("content_setup_needed").then((needed) => {
@@ -479,6 +583,8 @@ function App() {
       }
     });
     window.addEventListener("keydown", onKey);
+    listen("open-settings", () => openSettings());
+    invoke<SettingsView>("settings").then(takePrefixes);
     new ResizeObserver(() => setViewport(list.clientHeight)).observe(list);
     search("");
   });
@@ -517,6 +623,75 @@ function App() {
             <Show when={s().notes}>
               {(notes) => <p class="subtitle">Always included: your notes in {notes()}</p>}
             </Show>
+          </section>
+        )}
+      </Show>
+      <Show when={settingsState()}>
+        {(s) => (
+          <section class="setup">
+            <h2>Settings</h2>
+            <p class="subtitle">Saved to {s().view.path} and applied at once. Edits made there apply too.</p>
+            <Show when={s().view.problem}>
+              {(problem) => <p class="error">config.toml isn't applied until this is fixed: {problem()}</p>}
+            </Show>
+            <ul class="folders fields">
+              <For each={s().view.fields}>
+                {(f, i) => (
+                  <>
+                    <Show when={i() === 0 || s().view.fields[i() - 1].group !== f.group}>
+                      <li class="group">{f.group}</li>
+                    </Show>
+                    <li
+                      classList={{ selected: i() === s().index }}
+                      ref={(el) => i() === s().index && requestAnimationFrame(() => el.scrollIntoView({ block: "nearest" }))}
+                      onClick={() => setSettingsState({ ...s(), index: i(), draft: undefined })}
+                      onDblClick={activateSetting}
+                    >
+                      <span>{f.label}</span>
+                      <Show
+                        when={i() === s().index && s().draft !== undefined}
+                        fallback={
+                          <span class="size">
+                            {f.kind === "toggle"
+                              ? f.value
+                                ? "On"
+                                : "Off"
+                              : f.kind === "lines"
+                                ? `${String(f.value).split("\n").filter((l) => l.trim()).length || "None"}`
+                                : String(f.value) || "Default"}
+                          </span>
+                        }
+                      >
+                        <Show
+                          when={f.kind === "lines"}
+                          fallback={
+                            <input
+                              class="edit"
+                              value={s().draft}
+                              spellcheck={false}
+                              ref={(el) => requestAnimationFrame(() => el.select())}
+                              onInput={(e) => setSettingsState({ ...s(), draft: e.currentTarget.value })}
+                            />
+                          }
+                        >
+                          <textarea
+                            class="edit"
+                            value={s().draft}
+                            spellcheck={false}
+                            rows={5}
+                            ref={(el) => requestAnimationFrame(() => el.focus())}
+                            onInput={(e) => setSettingsState({ ...s(), draft: e.currentTarget.value })}
+                          />
+                        </Show>
+                      </Show>
+                      <Show when={f.hint}>
+                        <span class="hint">{f.hint}</span>
+                      </Show>
+                    </li>
+                  </>
+                )}
+              </For>
+            </ul>
           </section>
         )}
       </Show>
@@ -743,6 +918,24 @@ function App() {
         </Show>
       </div>
       <footer class="hints">
+        <Show when={settingsState()}>
+          {(s) => (
+            <Show
+              when={s().draft !== undefined}
+              fallback={
+                <>
+                  <span><kbd>↵</kbd> Change</span>
+                  <span><kbd>Esc</kbd> Close</span>
+                  <Show when={s().error}>{(error) => <span class="error">{error()}</span>}</Show>
+                </>
+              }
+            >
+              <span><kbd>{s().view.fields[s().index]?.kind === "lines" ? "Ctrl+↵" : "↵"}</kbd> Save</span>
+              <span><kbd>Esc</kbd> Cancel</span>
+              <Show when={s().error}>{(error) => <span class="error">{error()}</span>}</Show>
+            </Show>
+          )}
+        </Show>
         <Show when={aiSetup()}>
           {(v) => (
             <>

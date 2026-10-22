@@ -38,8 +38,6 @@ use crate::{
     query::{Action, Item},
 };
 
-const KEEP_DAYS: i64 = 30;
-const KEEP_ENTRIES: i64 = 1_000;
 const MAX_TEXT_BYTES: usize = 4 << 20;
 const MAX_PIXELS: u64 = 40_000_000;
 const SHOWN: usize = 50;
@@ -125,7 +123,8 @@ impl Clips {
     }
 
     /// Stores a copy (or moves an identical one to the top) and drops what is past keeping.
-    fn add(&self, captured: Captured, at: i64) -> rusqlite::Result<()> {
+    /// Saves an entry, keeping `keep` (days, entries) of history.
+    fn add(&self, captured: Captured, at: i64, keep: (u32, u32)) -> rusqlite::Result<()> {
         let hash = fingerprint(&captured);
         let (kind, text, html, rtf, image, bytes) = match captured {
             Captured::Text { text, html, rtf } => {
@@ -160,7 +159,7 @@ impl Clips {
                 html = excluded.html, rtf = excluded.rtf",
             params![hash as i64, kind, text, html, rtf, image, bytes as i64, at],
         )?;
-        prune(&db, at)
+        prune(&db, at, keep)
     }
 
     /// Newest first, pinned ones on top, keeping those whose text has every word of `filter`.
@@ -345,16 +344,15 @@ impl Row {
     }
 }
 
-fn prune(db: &Connection, at: i64) -> rusqlite::Result<()> {
-    let cutoff = at - KEEP_DAYS * 24 * 60 * 60;
+/// Drops unpinned entries older than `keep.0` days or past the newest `keep.1`.
+fn prune(db: &Connection, at: i64, keep: (u32, u32)) -> rusqlite::Result<()> {
+    let cutoff = at - i64::from(keep.0) * 24 * 60 * 60;
     let mut statement = db.prepare(
         "SELECT id, image FROM clips WHERE pinned = 0 AND (used < ?1 OR id NOT IN
             (SELECT id FROM clips WHERE pinned = 0 ORDER BY used DESC LIMIT ?2))",
     )?;
     let old: Vec<(i64, Option<String>)> = statement
-        .query_map(params![cutoff, KEEP_ENTRIES], |r| {
-            Ok((r.get(0)?, r.get(1)?))
-        })?
+        .query_map(params![cutoff, keep.1], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
     for (id, image) in old {
         db.execute("DELETE FROM clips WHERE id = ?1", [id])?;
@@ -417,8 +415,9 @@ fn fingerprint(captured: &Captured) -> u64 {
 }
 
 /// `clip` or `clip <words>`: the clipboard history, filtered by the words.
-pub fn mode(text: &str) -> Option<&str> {
-    let rest = text.trim_start().strip_prefix("clip")?;
+/// `<prefix> words`: `word` is the clipboard prefix from config.toml.
+pub fn mode<'a>(text: &'a str, word: &str) -> Option<&'a str> {
+    let rest = text.trim_start().strip_prefix(word)?;
     match rest.chars().next() {
         Some(' ') => Some(rest.trim()),
         _ => None,
@@ -502,9 +501,12 @@ unsafe extern "system" fn on_message(
     lparam: LPARAM,
 ) -> LRESULT {
     if message == WM_CLIPBOARDUPDATE {
-        if let Some(captured) = unsafe { read(window) }
+        let config = crate::settings::get();
+        let keep = (config.clipboard_days, config.clipboard_entries);
+        if config.tools.clipboard
+            && let Some(captured) = unsafe { read(window) }
             && let Some(clips) = APP.get().and_then(|a| a.try_state::<Clips>())
-            && let Err(e) = clips.add(captured, now())
+            && let Err(e) = clips.add(captured, now(), keep)
         {
             tracing::error!("clipboard entry not saved: {e}");
         }
@@ -762,15 +764,20 @@ mod tests {
     fn history_dedupes_filters_pins_and_prunes() {
         let clips = Clips::with(Connection::open_in_memory().unwrap()).unwrap();
         let day = 24 * 60 * 60;
-        clips.add(text("old note"), 0).unwrap();
-        clips.add(text("invoice 2041"), 40 * day).unwrap();
+        clips.add(text("old note"), 0, (30, 1_000)).unwrap();
+        clips
+            .add(text("invoice 2041"), 40 * day, (30, 1_000))
+            .unwrap();
         clips
             .add(
                 Captured::Files(vec![r"C:\a\report.pdf".into()]),
                 40 * day + 5,
+                (30, 1_000),
             )
             .unwrap();
-        clips.add(text("invoice 2041"), 40 * day + 10).unwrap();
+        clips
+            .add(text("invoice 2041"), 40 * day + 10, (30, 1_000))
+            .unwrap();
         let all = clips.items("", 40 * day + 70).unwrap();
         let titles: Vec<&str> = all.iter().map(|i| i.title.as_str()).collect();
         // The 40-day-old note is gone, and the repeat copy moved to the top instead of doubling.
@@ -790,17 +797,28 @@ mod tests {
         assert!(pinned[0].subtitle.starts_with("Pinned · Files"));
         assert!(pinned[0].actions.iter().any(|a| a.id == "clipunpin"));
         // Pinned entries outlive the 30 days.
-        clips.add(text("later"), 100 * day).unwrap();
+        clips.add(text("later"), 100 * day, (30, 1_000)).unwrap();
+        // A shorter history setting prunes more.
+        clips.add(text("next"), 100 * day + 1, (30, 1)).unwrap();
+        assert_eq!(
+            clips
+                .items("", 100 * day + 2)
+                .unwrap()
+                .iter()
+                .filter(|i| !i.subtitle.starts_with("Pinned"))
+                .count(),
+            1
+        );
         let later = clips.items("", 100 * day).unwrap();
         assert_eq!(later.len(), 2);
     }
 
     #[test]
     fn modes_and_clipboard_formats() {
-        assert_eq!(mode("clip "), Some(""));
-        assert_eq!(mode("clip invoice "), Some("invoice"));
-        assert_eq!(mode("clipchamp"), None);
-        assert_eq!(mode("clip"), None);
+        assert_eq!(mode("clip ", "clip"), Some(""));
+        assert_eq!(mode("clip invoice ", "clip"), Some("invoice"));
+        assert_eq!(mode("clipchamp", "clip"), None);
+        assert_eq!(mode("clip", "clip"), None);
 
         let mut drop = vec![20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0];
         for path in [r"C:\a.txt", r"D:\b c.png"] {

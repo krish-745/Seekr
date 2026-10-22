@@ -255,9 +255,11 @@ pub fn search(app: &AppHandle, parsed: &Parsed, shown: &HashSet<String>) -> Vec<
         add(&hit.path, rank, hit.line, None);
     }
     fused.sort_by(|a, b| b.0.total_cmp(&a.0));
+    // Left out at once, before the indexer's next pass drops them.
+    let config = crate::settings::get();
     fused
         .into_iter()
-        .filter(|f| !shown.contains(&f.1.to_lowercase()))
+        .filter(|f| !shown.contains(&f.1.to_lowercase()) && !config.excludes(&f.1))
         .take(RESULTS)
         .map(|(_, path, line, snippet)| {
             let name = Path::new(&path)
@@ -354,8 +356,9 @@ pub fn retrieve(app: &AppHandle, question: &str, budget: usize, skip: &[Passage]
     fused.sort_by(|a, b| b.0.total_cmp(&a.0));
     let mut chosen = Vec::new();
     let mut size = 0;
+    let config = crate::settings::get();
     for (_, path, line, text) in fused {
-        if skip.iter().any(|p| p.path == path && p.line == line) {
+        if config.excludes(&path) || skip.iter().any(|p| p.path == path && p.line == line) {
             continue;
         }
         let Some(text) = text.or_else(|| store.passage(reader, &path, line)) else {

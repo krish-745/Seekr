@@ -350,8 +350,47 @@ kbd {
   accent-color: var(--accent);
 }
 
-.setup .error {
+.setup .error,
+.hints .error {
   color: #e5534b;
+}
+
+.fields li {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+
+.fields li.group {
+  padding: 12px 10px 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.fields .hint {
+  width: 100%;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.fields .edit {
+  margin-left: auto;
+  width: 55%;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.fields textarea.edit {
+  width: 100%;
+  resize: none;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
 }
 
 .folders input {

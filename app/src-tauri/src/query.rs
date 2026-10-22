@@ -82,12 +82,33 @@ pub async fn query(
     ranker: State<'_, Ranker>,
 ) -> Result<(), String> {
     engine.begin(id);
-    // `clip …` lists clipboard history, `win …` open windows and `:…` emoji, and nothing else.
-    let windows = switcher::mode(&text).map(str::to_string);
-    let glyphs = emoji::mode(&text);
-    let (note, todo) = (notes::note_mode(&text), notes::todo_mode(&text));
-    let question = ai::mode(&text);
-    if clips::mode(&text).is_some()
+    let config = crate::settings::get();
+    let (tools, prefixes) = (&config.tools, &config.prefixes);
+    // `clip …` lists clipboard history, `win …` open windows and `:…` emoji, and nothing else;
+    // a tool that is off is never asked.
+    let clip = tools
+        .clipboard
+        .then(|| clips::mode(&text, &prefixes.clipboard))
+        .flatten();
+    let windows = tools
+        .windows
+        .then(|| switcher::mode(&text, &prefixes.windows))
+        .flatten()
+        .map(str::to_string);
+    let glyphs = tools
+        .emoji
+        .then(|| emoji::mode(&text, &prefixes.emoji))
+        .flatten();
+    let (note, todo) = if tools.notes {
+        (
+            notes::note_mode(&text, &prefixes.note),
+            notes::todo_mode(&text, &prefixes.todo),
+        )
+    } else {
+        (None, None)
+    };
+    let question = tools.ai.then(|| ai::mode(&text)).flatten();
+    if clip.is_some()
         || question.is_some()
         || windows.is_some()
         || glyphs.is_some()
@@ -111,7 +132,7 @@ pub async fn query(
                 (Some(words), ..) => emoji::items(words),
                 (_, Some(words), _) => notes::note_items(words),
                 (.., Some(words)) => notes::todo_items(words),
-                _ => clips::items(&app, clips::mode(&text).unwrap_or("")),
+                _ => clips::items(&app, clip.unwrap_or("")),
             },
         };
         if engine.is_current(id) {
@@ -140,10 +161,15 @@ pub async fn query(
     });
     // A calculation, typed path or URL is what the user meant, so it leads, unranked.
     let mut items = Vec::new();
+    let web = app.try_state::<Web>().filter(|_| tools.web);
     if parsed.filter.is_empty() {
-        items.extend(calc::items(&text));
-        items.extend(system::direct(&text));
-        if let Some(web) = app.try_state::<Web>() {
+        if tools.calculator {
+            items.extend(calc::items(&text));
+        }
+        if tools.system {
+            items.extend(system::direct(&text));
+        }
+        if let Some(web) = &web {
             items.extend(web.shortcut_items(&text));
         }
     }
@@ -153,8 +179,10 @@ pub async fn query(
     if parsed.filter.is_empty() {
         let mut candidates = apps::all(&index);
         candidates.extend(builtin::all());
-        candidates.extend(system::all());
-        if let Some(web) = app.try_state::<Web>() {
+        if tools.system {
+            candidates.extend(system::all());
+        }
+        if let Some(web) = &web {
             candidates.extend(web.bookmarks());
         }
         items.extend(ranker.rank(&text, candidates));
@@ -220,7 +248,7 @@ pub async fn query(
             .map_err(|e| e.to_string())?;
     }
     // Browser history, then the words on the web, close the list.
-    let Some(web) = app.try_state::<Web>() else {
+    let Some(web) = web else {
         return Ok(());
     };
     if !text_filter_free(&text) || !engine.is_current(id) {

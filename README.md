@@ -58,7 +58,7 @@ Type what you want: `lock`, `sleep`, `restart`, `shut down`, `sign out`, `mute`,
 
 ## Web
 
-`g tauri plugins` searches Google, `yt lofi` YouTube, `gh seekr` GitHub (also `ddg`, `b`, `wiki`, `maps`, `amz`, `so`, `r`, `npm`, `crates`, `mdn`, `imdb`, `tr`). Add your own in `%APPDATA%\Seekr\config.toml`:
+`g tauri plugins` searches Google, `yt lofi` YouTube, `gh seekr` GitHub (also `ddg`, `b`, `wiki`, `maps`, `amz`, `so`, `r`, `npm`, `crates`, `mdn`, `imdb`, `tr`). Add your own in Settings, or in `%APPDATA%\Seekr\config.toml`:
 
 ```toml
 search = "ddg"   # the engine for "Search the web"
@@ -94,6 +94,20 @@ The model for `?` isn't part of the install. The first time, the `?` row says so
 ```
 
 With both set, `api = "groq"` in `%APPDATA%\Seekr\config.toml` picks Groq; `api_model` picks the model (defaults: `openai/gpt-oss-120b` on Groq, `gemini-3.5-flash` on Gemini).
+
+## Settings
+
+Type `settings` (or use the tray icon's Settings) for the settings view. Arrow keys move, Enter changes the selected setting (a list, such as your web shortcuts, saves with Ctrl+Enter), and Esc closes it. You can change:
+- the hotkey
+- the content folders, and folders or names (such as `node_modules`) to leave out of file and content results
+- the web search engine and your web shortcuts
+- each tool on or off (calculator, clipboard history, window switcher, system commands, web, emoji, notes and to-dos, AI)
+- the words that open the clipboard, window, emoji, note and to-do lists
+- how long clipboard history is kept, and how many entries
+- how long the local AI model stays loaded
+- whether meaning indexing runs on battery
+
+Everything is saved to `%APPDATA%\Seekr\config.toml` (your comments in it are kept) and applies at once, without a restart. Editing that file by hand works too: a saved change applies within two seconds, and a mistake shows at the top of the settings view while Seekr keeps the settings it had.
 
 ## Develop
 
