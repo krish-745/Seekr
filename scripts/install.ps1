@@ -53,9 +53,36 @@ if (-not $SkipService) { Invoke-Service (Join-Path $root 'target\release\seekr-s
 
 New-Item -ItemType Directory -Force $dest | Out-Null
 Copy-Item (Join-Path $root 'target\release\seekr.exe') $exe -Force
-# The content indexer runs from next to the app.
-Copy-Item (Join-Path $root 'target\release\seekr-indexer.exe') (Join-Path $dest 'seekr-indexer.exe') -Force
-# Native DLLs (onnxruntime, pdfium) get pinned and copied next to the exe once Seekr ships them.
+# The content indexer runs from next to the app; both load DirectML for the embedding model.
+foreach ($file in 'seekr-indexer.exe', 'DirectML.dll') {
+    Copy-Item (Join-Path $root "target\release\$file") (Join-Path $dest $file) -Force
+}
+
+# The meaning-search model (gte-modernbert-base at a pinned revision; see
+# docs\benchmarks\embeddings.md): about 750 MB, fetched once and checked against its SHA-256.
+$models = Join-Path $env:LOCALAPPDATA 'Seekr\models\gte-modernbert-base'
+$revision = 'e7f32e3c00f91d699e8c43b53106206bcc72bb22'
+$modelFiles = [ordered]@{
+    'tokenizer.json'       = '6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30'
+    'onnx/model_int8.onnx' = 'bae96b276d342bf86eeee07c1bdbc0c75bb82bf4033941aab7fabc1e33ee3b44'
+    'onnx/model.onnx'      = '947f31df7effaeec4edb57c50e4ed7e0f2034d9336063f92615b92e3e0d24d78'
+}
+foreach ($name in $modelFiles.Keys) {
+    $target = Join-Path $models ($name -replace '/', '\')
+    $want = $modelFiles[$name]
+    if ((Test-Path $target) -and (Get-FileHash $target -Algorithm SHA256).Hash -eq $want) { continue }
+    New-Item -ItemType Directory -Force (Split-Path $target) | Out-Null
+    Write-Host "Downloading $name..."
+    $part = "$target.part"
+    # The progress bar slows Invoke-WebRequest down several times in Windows PowerShell.
+    $ProgressPreference = 'SilentlyContinue'
+    Invoke-WebRequest "https://huggingface.co/Alibaba-NLP/gte-modernbert-base/resolve/$revision/$name" -OutFile $part
+    if ((Get-FileHash $part -Algorithm SHA256).Hash -ne $want) {
+        Remove-Item $part
+        throw "$name doesn't match its checksum; not installed"
+    }
+    Move-Item $part $target -Force
+}
 
 Set-ItemProperty $run -Name Seekr -Value "`"$exe`" --hidden"
 # Task Manager's Startup tab can veto a Run entry; mark ours enabled (first byte 2).
@@ -67,4 +94,5 @@ if (-not (Test-Path $gpu)) { New-Item $gpu | Out-Null }
 Set-ItemProperty $gpu -Name $exe -Value 'GpuPreference=1;'
 
 Start-Process $exe -ArgumentList '--hidden'
-Write-Host "Seekr installed to $exe with the SeekrIndex service; starts at login. Press Alt+Space."
+$with = if ($SkipService) { '' } else { ' with the SeekrIndex service' }
+Write-Host "Seekr installed to $exe$with; starts at login. Press Alt+Space."

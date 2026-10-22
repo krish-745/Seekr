@@ -86,6 +86,7 @@ pub fn all(index: &AppIndex) -> Vec<Item> {
             subtitle: "Application".into(),
             preview: app.target.clone().unwrap_or_else(|| app.id.clone()),
             icon: app.icon.clone(),
+            line: None,
             actions: match app.target {
                 Some(_) => vec![OPEN, LOCATION, ADMIN, COPY_PATH],
                 None => vec![OPEN],

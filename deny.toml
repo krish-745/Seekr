@@ -71,6 +71,7 @@ feature-depth = 1
 # A list of advisory IDs to ignore. Note that ignored advisories will still
 # output a note when they are encountered.
 ignore = [
+    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained, not vulnerable; a proc macro tokenizers uses at build time" },
     { id = "RUSTSEC-2025-0141", reason = "bincode 1 is unmaintained, not vulnerable; syntect uses it only to load its own bundled syntax and theme dumps" },
     #"RUSTSEC-0000-0000",
     #{ id = "RUSTSEC-0000-0000", reason = "you can specify a reason the advisory is ignored" },
@@ -110,6 +111,9 @@ exceptions = [
     # Each entry is the crate and version constraint, and its specific allow
     # list
     #{ allow = ["Zlib"], crate = "adler32" },
+    # Build-time only: ort-sys downloads and checks the ONNX Runtime binaries with these.
+    { allow = ["ISC"], crate = "hmac-sha256" },
+    { allow = ["CDLA-Permissive-2.0"], crate = "webpki-root-certs" },
 ]
 
 # Some crates don't have (easily) machine readable licensing information,

@@ -273,6 +273,7 @@ mod tests {
             subtitle: String::new(),
             preview: String::new(),
             icon: None,
+            line: None,
             actions: Vec::new(),
         }
     }

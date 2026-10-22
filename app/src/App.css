@@ -195,6 +195,27 @@ body {
   overflow-x: auto;
 }
 
+/* A content match: line numbers, the matching line marked, query words highlighted. */
+.code .gutter {
+  display: inline-block;
+  min-width: 4ch;
+  margin-right: 12px;
+  text-align: right;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.code .focus {
+  background: var(--selection);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.preview mark {
+  color: inherit;
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 2px;
+}
+
 .more {
   color: var(--text-muted);
 }

@@ -9,7 +9,7 @@ use tantivy::{
     collector::TopDocs,
     directory::MmapDirectory,
     doc,
-    query::QueryParser,
+    query::{BooleanQuery, Occur, QueryParser, TermQuery},
     schema::{
         Field, INDEXED, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions,
         Value,
@@ -102,6 +102,26 @@ impl Store {
             .try_into()
     }
 
+    /// The text of the passage of `path` that starts at `line`.
+    pub fn passage(&self, reader: &IndexReader, path: &str, line: u32) -> Option<String> {
+        let searcher = reader.searcher();
+        let term = |t: Term| -> (Occur, Box<dyn tantivy::query::Query>) {
+            (
+                Occur::Must,
+                Box::new(TermQuery::new(t, IndexRecordOption::Basic)),
+            )
+        };
+        let query = BooleanQuery::new(vec![
+            term(Term::from_field_text(self.path, path)),
+            term(Term::from_field_u64(self.line, u64::from(line))),
+        ]);
+        let top = searcher
+            .search(&query, &TopDocs::with_limit(1).order_by_score())
+            .ok()?;
+        let doc: TantivyDocument = searcher.doc(top.first()?.1).ok()?;
+        doc.get_first(self.body)?.as_str().map(String::from)
+    }
+
     /// The best passage of each of the `limit` best files for `query`. Every word must appear
     /// (stemmed); quotes, `-word` and other query syntax work, and malformed syntax is read as
     /// plain words rather than failing.
@@ -134,9 +154,19 @@ impl Store {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(1);
             let snippet = snippets.snippet_from_doc(&doc);
+            // The line of the first highlighted word, not where the passage starts.
+            let body = doc
+                .get_first(self.body)
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let first = snippet.highlighted().first().map_or(0, |r| r.start);
+            let below = body
+                .find(snippet.fragment())
+                .and_then(|at| body.get(..at + first))
+                .map_or(0, |before| before.matches('\n').count());
             hits.push(Hit {
                 path: path.to_string(),
-                line: line as u32,
+                line: (line as usize + below) as u32,
                 score,
                 snippet: snippet.fragment().to_string(),
                 highlights: snippet
@@ -188,6 +218,13 @@ mod tests {
         store
             .replace(&writer, r"C:\b.txt", &[chunk("nothing relevant here", 1)])
             .unwrap();
+        store
+            .replace(
+                &writer,
+                r"C:\c.txt",
+                &[chunk("filler\nmore filler\nthe zanzibar quokka", 4)],
+            )
+            .unwrap();
         writer.commit().unwrap();
         let reader = store.reader().unwrap();
         reader.reload().unwrap();
@@ -204,7 +241,17 @@ mod tests {
             "all words"
         );
         assert!(store.search(&reader, "unclosed \"quote", 10).is_ok());
+        let hits = store.search(&reader, "quokka", 10).unwrap();
+        assert_eq!(
+            hits[0].line, 6,
+            "the matching line, two below the passage start"
+        );
 
+        assert_eq!(
+            store.passage(&reader, r"C:\a.md", 9).as_deref(),
+            Some("more invoice talk")
+        );
+        assert_eq!(store.passage(&reader, r"C:\a.md", 2), None);
         store.remove(&writer, r"C:\a.md");
         writer.commit().unwrap();
         reader.reload().unwrap();

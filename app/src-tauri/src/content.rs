@@ -2,11 +2,17 @@
 //! and a native folder chooser. The choice is saved through `common::content`.
 
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::Mutex,
+    time::{Duration, Instant, SystemTime},
 };
 
-use content::store::Store;
+use content::{
+    embed::{self, Device, Embedder, Weights},
+    store::Store,
+    vectors::{self, Vectors},
+};
 use fsindex::filter::Parsed;
 use serde::Serialize;
 use tantivy::IndexReader;
@@ -21,8 +27,20 @@ use windows::Win32::{
 
 use crate::{direct, fileops::Com, indexer::Indexer, query::Item};
 
-/// Content results shown per query.
+/// Content results shown per query, and how many each of keyword and meaning search proposes.
 const RESULTS: usize = 20;
+const CANDIDATES: usize = 40;
+/// Reciprocal rank fusion's usual constant: ranks matter, but the top few don't dominate.
+const RRF_K: f32 = 60.0;
+/// A meaning match below this centred cosine is unrelated text: on real folders, hub passages
+/// reach about 0.35 and nonsense queries 0.25, while a passage that means the query scores 0.4+.
+const MEANING_FLOOR: f32 = 0.36;
+/// A partial word has no meaning to search for.
+const MEANING_MIN_CHARS: usize = 4;
+/// The query model holds about 170 MB, so it goes soon after the panel is put away; loading it
+/// again takes well under a second, on a thread, while keyword results show.
+const MODEL_IDLE: Duration = Duration::from_secs(30);
+const SNIPPET_CHARS: usize = 180;
 /// Shorter queries match too much text to be useful.
 const MIN_QUERY_CHARS: usize = 3;
 
@@ -141,13 +159,63 @@ pub fn add(app: &AppHandle, path: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The content index, opened at the first search after the indexer has created it.
+/// Keyword and meaning search over the indexer's output, opened lazily: the full-text index at
+/// the first search after it exists, the query model when the panel opens.
 #[derive(Default)]
-pub struct Search(Mutex<Option<(Store, IndexReader)>>);
+pub struct Search {
+    index: Mutex<Option<(Store, IndexReader)>>,
+    meaning: Mutex<Meaning>,
+}
 
-/// Files whose text matches the query's words, best passage first, as path results whose
-/// subtitle is the matching line.
-pub fn search(app: &AppHandle, parsed: &Parsed) -> Vec<Item> {
+#[derive(Default)]
+struct Meaning {
+    model: Option<Embedder>,
+    /// The vector file and when it was written, reloaded when the indexer saves a new one.
+    vectors: Option<(SystemTime, Vectors)>,
+    used: Option<Instant>,
+}
+
+/// Loads the query model in the background when the panel opens, so the first keystroke doesn't
+/// wait for it, and drops it once it has gone unused for a while.
+pub fn warm(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let state = app.state::<Search>();
+        let mut meaning = state.meaning.lock().unwrap();
+        meaning.used = Some(Instant::now());
+        if meaning.model.is_none() && embed::available(Weights::Int8) {
+            let start = Instant::now();
+            match Embedder::load(Weights::Int8, Device::Cpu) {
+                Ok(model) => {
+                    tracing::info!("query model loaded in {:?}", start.elapsed());
+                    meaning.model = Some(model);
+                }
+                Err(e) => tracing::warn!("no meaning search: {e}"),
+            }
+        }
+    });
+}
+
+/// Drops the query model and vectors after `MODEL_IDLE` without a search.
+pub fn start_reaper(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_secs(10));
+            let state = app.state::<Search>();
+            let mut meaning = state.meaning.lock().unwrap();
+            if meaning.model.is_some() && meaning.used.is_none_or(|u| u.elapsed() > MODEL_IDLE) {
+                *meaning = Meaning::default();
+                tracing::info!("query model unloaded after {MODEL_IDLE:?} unused");
+            }
+        }
+    });
+}
+
+/// Files whose text matches the query, by words (BM25) and by meaning (embeddings), fused by
+/// reciprocal rank, as path results whose subtitle is the matching line. Files in `shown` (the
+/// file-name results already on screen) are left out.
+pub fn search(app: &AppHandle, parsed: &Parsed, shown: &HashSet<String>) -> Vec<Item> {
     let query = tantivy_query(&parsed.text);
     // shortcut: file filters (ext:, in:, dm:) don't narrow content results yet; until they do,
     // a filtered query shows file names only.
@@ -155,7 +223,7 @@ pub fn search(app: &AppHandle, parsed: &Parsed) -> Vec<Item> {
         return Vec::new();
     }
     let state = app.state::<Search>();
-    let mut open = state.0.lock().unwrap();
+    let mut open = state.index.lock().unwrap();
     if open.is_none() {
         let dir = content::index_dir();
         if !dir.join("meta.json").exists() {
@@ -172,23 +240,99 @@ pub fn search(app: &AppHandle, parsed: &Parsed) -> Vec<Item> {
     let Some((store, reader)) = open.as_ref() else {
         return Vec::new();
     };
-    let hits = match store.search(reader, &query, RESULTS) {
-        Ok(hits) => hits,
-        Err(e) => {
+    let keyword = store
+        .search(reader, &query, CANDIDATES)
+        .unwrap_or_else(|e| {
             tracing::warn!("content search failed: {e}");
-            return Vec::new();
+            Vec::new()
+        });
+    let meaning = if query.chars().count() >= MEANING_MIN_CHARS {
+        state.meaning.lock().unwrap().search(&plain_words(&query))
+    } else {
+        Vec::new()
+    };
+
+    // Reciprocal rank fusion: each list adds 1/(k + rank) for the files it found.
+    let mut fused: Vec<(f32, String, u32, Option<String>)> = Vec::new();
+    let mut add = |path: &str, rank: usize, line: u32, snippet: Option<String>| {
+        let gain = 1.0 / (RRF_K + rank as f32 + 1.0);
+        match fused.iter_mut().find(|f| f.1 == path) {
+            Some(f) => {
+                f.0 += gain;
+                if f.3.is_none() {
+                    (f.2, f.3) = (line, snippet);
+                }
+            }
+            None => fused.push((gain, path.to_string(), line, snippet)),
         }
     };
-    hits.into_iter()
-        .map(|hit| {
-            let name = Path::new(&hit.path)
+    for (rank, hit) in keyword.iter().enumerate() {
+        add(&hit.path, rank, hit.line, Some(hit.snippet.clone()));
+    }
+    for (rank, hit) in meaning
+        .iter()
+        .filter(|h| h.score >= MEANING_FLOOR)
+        .enumerate()
+    {
+        add(&hit.path, rank, hit.line, None);
+    }
+    fused.sort_by(|a, b| b.0.total_cmp(&a.0));
+    fused
+        .into_iter()
+        .filter(|f| !shown.contains(&f.1.to_lowercase()))
+        .take(RESULTS)
+        .map(|(_, path, line, snippet)| {
+            let name = Path::new(&path)
                 .file_name()
-                .map_or_else(|| hit.path.clone(), |n| n.to_string_lossy().into_owned());
-            let snippet = hit.snippet.split_whitespace().collect::<Vec<_>>().join(" ");
-            let subtitle = format!("Line {} · {snippet}", hit.line);
-            direct::path_item(hit.path, name, subtitle, false)
+                .map_or_else(|| path.clone(), |n| n.to_string_lossy().into_owned());
+            // A meaning-only match shows the start of the passage it matched.
+            let text = snippet
+                .or_else(|| store.passage(reader, &path, line))
+                .unwrap_or_default();
+            let text: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            let text: String = text.chars().take(SNIPPET_CHARS).collect();
+            let subtitle = format!("Line {line} · {text}");
+            let mut item = direct::path_item(path, name, subtitle, false);
+            item.line = Some(line);
+            item
         })
         .collect()
+}
+
+impl Meaning {
+    /// The files closest in meaning to `text`; empty without a model or vectors.
+    fn search(&mut self, text: &str) -> Vec<vectors::Hit> {
+        self.used = Some(Instant::now());
+        let path = content::vectors_path();
+        let written = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+        let stale = self.vectors.as_ref().map(|(t, _)| Some(*t)) != Some(written);
+        if stale && let Some(written) = written {
+            match Vectors::load(&path) {
+                Ok(v) => self.vectors = Some((written, v)),
+                Err(e) => tracing::warn!("vectors unreadable: {e}"),
+            }
+        }
+        let (Some(model), Some((_, vectors))) = (self.model.as_mut(), self.vectors.as_ref()) else {
+            return Vec::new();
+        };
+        match model.embed(&[text]) {
+            Ok(q) => vectors.search(&q[0], CANDIDATES),
+            Err(e) => {
+                tracing::warn!("query embedding failed: {e}");
+                Vec::new()
+            }
+        }
+    }
+}
+
+/// The words of a Tantivy query, without quotes, exclusions or field syntax, for embedding.
+fn plain_words(query: &str) -> String {
+    query
+        .split_whitespace()
+        .filter(|w| !w.starts_with('-'))
+        .map(|w| w.trim_matches('"'))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The name pattern in Tantivy's syntax: nucleo's `'exact\ words` becomes a quoted phrase,
@@ -232,6 +376,10 @@ mod tests {
     fn converts_name_patterns_to_tantivy_syntax() {
         let parsed = fsindex::filter::parse(r#"invoice "due date" -draft"#);
         assert_eq!(tantivy_query(&parsed.text), r#"invoice "due date" -draft"#);
+        assert_eq!(
+            plain_words(&tantivy_query(&parsed.text)),
+            "invoice due date"
+        );
         assert_eq!(tantivy_query("^readme$"), "readme");
     }
 }

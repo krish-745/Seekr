@@ -94,7 +94,8 @@ fn supervise(indexer: &Indexer, exe: &Path) {
     loop {
         {
             let mut work = indexer.work.lock().unwrap();
-            while !work.full && work.paths.is_empty() {
+            // Paused, work waits; resuming queues a full pass, which covers it.
+            while (!work.full && work.paths.is_empty()) || content::is_paused() {
                 work = indexer.wake.wait(work).unwrap();
             }
         }

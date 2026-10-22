@@ -2,11 +2,11 @@
 
 A fast keyboard launcher for Windows: apps, files, file contents and meaning, plus everyday tools, all on one hotkey.
 
-**Status:** early development (Phase 3: content search). Alt+Space opens the search panel: installed apps (Start menu and Store), every file and folder name on your fixed drives, and the words inside files in the folders you choose (asked the first time the panel opens). Meaning search, tools and AI come later.
+**Status:** early development (Phase 3: content search). Alt+Space opens the search panel: installed apps (Start menu and Store), every file and folder name on your fixed drives, and the text inside files in the folders you choose (asked the first time the panel opens), matched by words and by meaning. Tools and AI come later.
 
 ## Install
 
-Build and install for daily use. This copies the app to `%LOCALAPPDATA%\Programs\Seekr` (starts hidden at login, power-saving GPU) and installs the SeekrIndex service to `C:\Program Files\Seekr`, which asks for one UAC approval:
+Build and install for daily use. This copies the app to `%LOCALAPPDATA%\Programs\Seekr` (starts hidden at login, power-saving GPU), downloads the meaning-search model (about 750 MB, once) to `%LOCALAPPDATA%\Seekr\models`, and installs the SeekrIndex service to `C:\Program Files\Seekr`, which asks for one UAC approval:
 
 ```powershell
 scripts\install.ps1             # build, install, start

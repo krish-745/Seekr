@@ -5,6 +5,8 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
+use crate::vectors::Vectors;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
     /// Being read now; still set at the next start means that run died on this file.
@@ -59,8 +61,17 @@ impl State {
             "PRAGMA journal_mode = WAL;
              CREATE TABLE IF NOT EXISTS files (
                  path TEXT PRIMARY KEY, size INTEGER NOT NULL, modified INTEGER NOT NULL,
-                 status TEXT NOT NULL, note TEXT);",
+                 status TEXT NOT NULL, note TEXT);
+             CREATE TABLE IF NOT EXISTS vectors (
+                 path TEXT NOT NULL, line INTEGER NOT NULL, scale REAL NOT NULL,
+                 data BLOB NOT NULL);
+             CREATE INDEX IF NOT EXISTS vectors_path ON vectors (path);",
         )?;
+        // Added with meaning search: whether a file's passages have vectors yet.
+        let has_column = conn.prepare("SELECT embedded FROM files LIMIT 0").is_ok();
+        if !has_column {
+            conn.execute_batch("ALTER TABLE files ADD COLUMN embedded INTEGER NOT NULL DEFAULT 0")?;
+        }
         Ok(Self(conn))
     }
 
@@ -98,7 +109,59 @@ impl State {
     pub fn remove(&self, path: &str) -> rusqlite::Result<()> {
         self.0
             .execute("DELETE FROM files WHERE path = ?1", [path])?;
+        self.0
+            .execute("DELETE FROM vectors WHERE path = ?1", [path])?;
         Ok(())
+    }
+
+    /// Whether `path` has vectors for its current text.
+    pub fn embedded(&self, path: &str) -> rusqlite::Result<bool> {
+        Ok(self
+            .0
+            .query_row("SELECT embedded FROM files WHERE path = ?1", [path], |r| {
+                r.get::<_, i64>(0)
+            })
+            .optional()?
+            == Some(1))
+    }
+
+    /// Replaces the vectors of `path` (start line, scale, int8 data) and marks it embedded;
+    /// an empty list just clears them.
+    pub fn set_vectors(&self, path: &str, rows: &[(u32, f32, Vec<i8>)]) -> rusqlite::Result<()> {
+        let tx = self.0.unchecked_transaction()?;
+        tx.execute("DELETE FROM vectors WHERE path = ?1", [path])?;
+        for (line, scale, data) in rows {
+            let bytes: Vec<u8> = data.iter().map(|&b| b as u8).collect();
+            tx.execute(
+                "INSERT INTO vectors (path, line, scale, data) VALUES (?1, ?2, ?3, ?4)",
+                params![path, line, f64::from(*scale), bytes],
+            )?;
+        }
+        tx.execute(
+            "UPDATE files SET embedded = ?2 WHERE path = ?1",
+            params![path, i64::from(!rows.is_empty())],
+        )?;
+        tx.commit()
+    }
+
+    /// Every stored vector, grouped by file, for the app's meaning search.
+    pub fn vectors(&self) -> rusqlite::Result<Vectors> {
+        let mut stmt = self
+            .0
+            .prepare("SELECT path, line, scale, data FROM vectors ORDER BY path, rowid")?;
+        let mut out = Vectors::default();
+        let mut rows = stmt.query([])?;
+        while let Some(r) = rows.next()? {
+            let data: Vec<u8> = r.get(3)?;
+            let data: Vec<i8> = data.into_iter().map(|b| b as i8).collect();
+            out.push(
+                &r.get::<_, String>(0)?,
+                r.get(1)?,
+                r.get::<_, f64>(2)? as f32,
+                &data,
+            );
+        }
+        Ok(out)
     }
 
     pub fn paths(&self) -> rusqlite::Result<Vec<String>> {
@@ -140,7 +203,28 @@ mod tests {
         assert_eq!(state.get("a").unwrap(), Some(seen(Status::Indexed)));
         assert_eq!(state.quarantine_unfinished().unwrap(), ["b"]);
         assert_eq!(state.get("b").unwrap().unwrap().status, Status::Quarantined);
+        assert!(!state.embedded("a").unwrap());
+        let v = vec![1i8; crate::embed::DIMS];
+        state
+            .set_vectors("a", &[(1, 0.5, v.clone()), (9, 0.5, v)])
+            .unwrap();
+        assert!(state.embedded("a").unwrap());
+        assert_eq!(state.vectors().unwrap().len(), 2);
+        state
+            .set(
+                "a",
+                Seen {
+                    size: 11,
+                    ..seen(Status::Indexed)
+                },
+                None,
+            )
+            .unwrap();
         state.remove("a").unwrap();
+        assert!(
+            state.vectors().unwrap().is_empty(),
+            "vectors go with the file"
+        );
         assert_eq!(state.paths().unwrap(), ["b"]);
         assert_eq!(state.get("missing").unwrap(), None);
     }

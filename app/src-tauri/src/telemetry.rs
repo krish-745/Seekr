@@ -2,7 +2,7 @@
 
 use std::{sync::Mutex, time::Instant};
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 /// show: hotkey to panel ready; keystroke: to the first results painted; files and content: to
 /// file-name and file-content results.
@@ -57,11 +57,13 @@ fn percentile(sorted: &[f64], p: f64) -> f64 {
     sorted[rank.clamp(1, sorted.len()) - 1]
 }
 
+/// The panel is on screen and focused; also warms the meaning-search model for typing.
 #[tauri::command]
-pub fn panel_ready(telemetry: State<'_, Telemetry>) {
+pub fn panel_ready(app: AppHandle, telemetry: State<'_, Telemetry>) {
     if let Some(at) = telemetry.shown_at.lock().unwrap().take() {
         telemetry.record("show", at.elapsed().as_secs_f64() * 1000.0);
     }
+    crate::content::warm(&app);
 }
 
 /// Keystroke-to-painted time measured in the webview.

@@ -2,7 +2,7 @@
 
 use std::{fs, io::Write, path::PathBuf};
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::query::{Action, Item};
@@ -18,6 +18,10 @@ const REVEAL: Action = Action {
 const QUIT: Action = Action {
     id: "quit",
     label: "Quit",
+};
+const TOGGLE: Action = Action {
+    id: "toggle",
+    label: "Pause or resume",
 };
 /// The panel opens its folder picker for this one; Rust never sees it.
 const SETUP: Action = Action {
@@ -48,6 +52,7 @@ pub fn all() -> Vec<Item> {
             subtitle: config.clone(),
             preview: format!("Edit {config} to change the hotkey.\n\n{CONFIG_TEMPLATE}"),
             icon: None,
+            line: None,
             actions: vec![OPEN, REVEAL],
         },
         Item {
@@ -56,6 +61,7 @@ pub fn all() -> Vec<Item> {
             subtitle: logs.clone(),
             preview: format!("Daily logs, latency summaries and panic reports live in {logs}."),
             icon: None,
+            line: None,
             actions: vec![OPEN],
         },
         Item {
@@ -64,22 +70,67 @@ pub fn all() -> Vec<Item> {
             subtitle: "Folders Seekr searches inside".into(),
             preview: "Pick the folders whose files Seekr reads for content and meaning search. Your notes folder is always included.".into(),
             icon: None,
+            line: None,
             actions: vec![SETUP],
         },
+        indexing(),
         Item {
             id: "seekr:quit".into(),
             title: "Quit Seekr".into(),
             subtitle: "Stop Seekr until the next login or launch".into(),
             preview: "Closes the panel, tray icon and hotkey.".into(),
             icon: None,
+            line: None,
             actions: vec![QUIT],
         },
     ]
 }
 
+/// Pause or resume content indexing, with what the indexer is doing now.
+fn indexing() -> Item {
+    let paused = content::is_paused();
+    let status = match content::read_progress() {
+        Some(p) if p.phase == "embedding" => {
+            format!(
+                "Embedding passages: {} of {}",
+                p.done,
+                p.total.unwrap_or(p.done)
+            )
+        }
+        Some(p) => format!("Reading files: {} checked", p.done),
+        None if paused => "Paused; files that change wait until you resume".into(),
+        None => "Up to date".into(),
+    };
+    Item {
+        id: "seekr:indexing".into(),
+        title: if paused {
+            "Resume content indexing".into()
+        } else {
+            "Pause content indexing".into()
+        },
+        subtitle: status,
+        preview: "Content indexing reads the files in your content-search folders in the background. Pausing stops it at the next file; resuming catches up on everything that changed. Bulk embedding also waits while the laptop is on battery.".into(),
+        icon: None,
+        line: None,
+        actions: vec![TOGGLE],
+    }
+}
+
 pub fn run(app: &AppHandle, item: &str, action: &str) -> Result<(), String> {
     let opener = app.opener();
     match (item, action) {
+        ("seekr:indexing", "toggle") => {
+            let resume = content::is_paused();
+            content::set_paused(!resume).map_err(|e| e.to_string())?;
+            tracing::info!(
+                "content indexing {}",
+                if resume { "resumed" } else { "paused" }
+            );
+            if resume {
+                app.state::<crate::indexer::Indexer>().refresh();
+            }
+            return Ok(());
+        }
         ("seekr:config", "open") => {
             ensure_config()?;
             opener.open_path(config_path().display().to_string(), None::<&str>)

@@ -288,6 +288,7 @@ pub fn run() {
             app.manage(ranker);
             files::start(app.handle());
             indexer::start(app.handle());
+            content::start_reaper(app.handle());
             register_hotkey(app.handle());
             apps::refresh(app.handle());
             build_tray(app)?;

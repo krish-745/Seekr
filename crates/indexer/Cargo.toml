@@ -16,4 +16,4 @@ content = { path = "../content" }
 ignore = "0.4.33"
 tantivy = "0.27.0"
 tracing = "0.1"
-windows = { version = "0.62", features = ["Win32_System_Threading"] }
+windows = { version = "0.62", features = ["Win32_Graphics_Dxgi", "Win32_System_Power", "Win32_System_Threading"] }

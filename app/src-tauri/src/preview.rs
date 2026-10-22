@@ -14,6 +14,8 @@ use syntect::{
 /// Read at most this much of a text file; the pane shows only the top anyway.
 const TEXT_BYTES: u64 = 64 * 1024;
 const CODE_LINES: usize = 400;
+/// Lines shown above a content match, for context.
+const CONTEXT_LINES: u32 = 6;
 /// Minified files have megabyte lines that highlight slowly and show nothing useful.
 const LINE_CHARS: usize = 1_000;
 const FOLDER_ENTRIES: usize = 200;
@@ -39,6 +41,11 @@ pub enum Preview {
     Code {
         lines: Vec<Vec<(String, String)>>,
         truncated: bool,
+        /// Number of the first line shown (1 unless the preview opens at a match).
+        first: u32,
+        /// The line to show marked and scrolled into view: where a content match starts.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        focus: Option<u32>,
     },
     /// HTML from Markdown with any raw HTML dropped.
     Markdown {
@@ -82,11 +89,49 @@ pub fn thumbnail(query: &str) -> Option<Vec<u8>> {
     crate::apps::thumbnail_png(&path, THUMB_PX)
 }
 
+/// `line` opens a content match where its passage starts.
 #[tauri::command]
-pub async fn preview(path: String, dark: bool) -> Preview {
-    tauri::async_runtime::spawn_blocking(move || build(&path, dark))
-        .await
-        .unwrap_or(Preview::Nothing)
+pub async fn preview(path: String, dark: bool, line: Option<u32>) -> Preview {
+    tauri::async_runtime::spawn_blocking(move || match line {
+        Some(line) => at_line(&path, dark, line).unwrap_or_else(|| build(&path, dark)),
+        None => build(&path, dark),
+    })
+    .await
+    .unwrap_or(Preview::Nothing)
+}
+
+/// The text the indexer chunked (Office and notebook text included), from a few lines before
+/// `line`, so line numbers match the content result.
+fn at_line(path: &str, dark: bool, line: u32) -> Option<Preview> {
+    let p = Path::new(path);
+    let kind = Kind::of(p)?;
+    let text = extract::extract(p, kind).ok().flatten()?;
+    let first = line.saturating_sub(CONTEXT_LINES).max(1);
+    let window: String = text
+        .split_inclusive('\n')
+        .skip(first as usize - 1)
+        .take(CODE_LINES + 1)
+        .collect();
+    let ext = match kind {
+        Kind::Text => p
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default(),
+        Kind::Markdown => "md".into(),
+        _ => "txt".into(),
+    };
+    let Preview::Code {
+        lines, truncated, ..
+    } = code(&window, &ext, dark, false)
+    else {
+        return None;
+    };
+    Some(Preview::Code {
+        lines,
+        truncated,
+        first,
+        focus: Some(line),
+    })
 }
 
 fn build(path: &str, dark: bool) -> Preview {
@@ -190,7 +235,12 @@ fn code(text: &str, ext: &str, dark: bool, truncated: bool) -> Preview {
         );
     }
     let truncated = truncated || text.lines().nth(CODE_LINES).is_some();
-    Preview::Code { lines, truncated }
+    Preview::Code {
+        lines,
+        truncated,
+        first: 1,
+        focus: None,
+    }
 }
 
 /// Raw HTML is dropped, so the pane can't be made to run script or load remote content.
@@ -260,7 +310,10 @@ mod tests {
 
     #[test]
     fn code_is_highlighted_in_runs() {
-        let Preview::Code { lines, truncated } = code("fn main() {}\n", "rs", true, false) else {
+        let Preview::Code {
+            lines, truncated, ..
+        } = code("fn main() {}\n", "rs", true, false)
+        else {
             panic!("not code");
         };
         assert!(!truncated);

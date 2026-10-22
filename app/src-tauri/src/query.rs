@@ -1,6 +1,9 @@
 //! Query engine: every keystroke is a query with a rising id, and a newer id cancels older work.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::{
+    collections::HashSet,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use fsindex::filter;
 use serde::Serialize;
@@ -23,6 +26,9 @@ pub struct Item {
     pub preview: String,
     /// `http://icon.localhost/<file>` from the icon cache.
     pub icon: Option<String>,
+    /// For a content match: the line its passage starts on, where the preview opens.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
     pub actions: Vec<Action>,
 }
 
@@ -112,6 +118,13 @@ pub async fn query(
         })
         .map_err(|e| e.to_string())?;
     let files = files.await.map_err(|e| e.to_string())?;
+    // File-name results already on screen aren't repeated as content results.
+    let shown: HashSet<String> = files
+        .iter()
+        .flatten()
+        .filter_map(|i| i.id.strip_prefix("path:"))
+        .map(str::to_lowercase)
+        .collect();
     if let Some(items) = files.filter(|items| !items.is_empty() && engine.is_current(id)) {
         let chips = Vec::new();
         on_batch
@@ -129,10 +142,11 @@ pub async fn query(
         return Ok(());
     }
     let content_app = app.clone();
-    let items =
-        tauri::async_runtime::spawn_blocking(move || content::search(&content_app, &parsed))
-            .await
-            .map_err(|e| e.to_string())?;
+    let items = tauri::async_runtime::spawn_blocking(move || {
+        content::search(&content_app, &parsed, &shown)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
     if !items.is_empty() && engine.is_current(id) {
         let chips = Vec::new();
         on_batch

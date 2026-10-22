@@ -65,6 +65,7 @@ pub fn items(text: &str) -> Vec<Item> {
             subtitle: "Open in browser".into(),
             preview: url,
             icon: None,
+            line: None,
             actions: vec![OPEN, COPY_URL],
         }];
     }
@@ -109,6 +110,7 @@ pub fn path_item(path: String, title: String, subtitle: String, is_dir: bool) ->
         subtitle,
         preview: path,
         icon: None,
+        line: None,
         actions,
     }
 }

@@ -17,18 +17,32 @@ use std::{
 
 use content::{
     chunk::chunks,
+    embed::{self, Device, Embedder, Weights},
     extract::{self, Kind},
     state::{Seen, State, Status},
     store::Store,
+    vectors,
 };
 use tantivy::IndexWriter;
-use windows::Win32::System::Threading::{
-    GetCurrentProcess, PROCESS_MODE_BACKGROUND_BEGIN, SetPriorityClass,
+use windows::Win32::{
+    Graphics::Dxgi::{CreateDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, IDXGIFactory1},
+    System::{
+        Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS},
+        Threading::{
+            GetCurrentProcess, IDLE_PRIORITY_CLASS, PROCESS_MODE_BACKGROUND_BEGIN,
+            PROCESS_MODE_BACKGROUND_END, SetPriorityClass,
+        },
+    },
 };
 
 const EXTRACT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Commit at least this often during a long pass, so search sees progress.
 const COMMIT_EVERY: Duration = Duration::from_secs(5);
+/// At least this many passages to embed make a bulk run, which may use the GPU.
+const BULK: usize = 64;
+/// Passages embedded per model call: the GPU's fixed batch.
+const BATCH: usize = embed::GPU_BATCH;
+const SAVE_VECTORS_EVERY: Duration = Duration::from_secs(30);
 /// Exit code for a file that hung; the app just starts another run later.
 const HUNG: u8 = 3;
 const RECALL_ON_DATA_ACCESS: u32 = 0x0040_0000;
@@ -69,11 +83,19 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
         Err(e) => return Err(e.into()),
     };
+    if content::is_paused() {
+        tracing::info!("content indexing is paused");
+        return Ok(ExitCode::SUCCESS);
+    }
     let state = State::open(&content::state_path())?;
     for path in state.quarantine_unfinished()? {
         tracing::warn!("quarantined {path}: a run stopped while reading it");
     }
     let folders = common::content::folders();
+    let embed = embed::available(Weights::Full);
+    if !embed {
+        tracing::info!("no embedding model installed; meaning search stays off");
+    }
     let mut run = Run {
         store: &store,
         writer: &mut writer,
@@ -81,6 +103,14 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         indexed: 0,
         removed: 0,
         committed: Instant::now(),
+        embed,
+        pending: Vec::new(),
+        model: None,
+        embedded: 0,
+        vectors_changed: false,
+        files_seen: 0,
+        paused: false,
+        reported: Instant::now(),
     };
     let started = Instant::now();
     let outcome = if std::env::args().any(|a| a == "--stdin") {
@@ -96,9 +126,15 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         run.full(&folders)
     };
     run.writer.commit()?;
+    if outcome.is_ok() {
+        run.embed_pending();
+    }
+    run.save_vectors();
+    content::write_progress(None);
     tracing::info!(
-        "indexed {} files, removed {} in {:?}",
+        "indexed {} files, embedded {} passages, removed {} in {:?}",
         run.indexed,
+        run.embedded,
         run.removed,
         started.elapsed()
     );
@@ -120,6 +156,18 @@ struct Run<'a> {
     indexed: usize,
     removed: usize,
     committed: Instant,
+    /// Whether the embedding model is installed.
+    embed: bool,
+    /// Passages (file, start line, text) still to embed, in file order.
+    pending: Vec<(String, u32, String)>,
+    /// Loaded at the first passage to embed, on the GPU for a bulk run.
+    model: Option<Embedder>,
+    embedded: usize,
+    vectors_changed: bool,
+    files_seen: u64,
+    /// Set once the user pauses indexing: no more files are read and nothing is dropped.
+    paused: bool,
+    reported: Instant,
 }
 
 impl Run<'_> {
@@ -129,12 +177,27 @@ impl Run<'_> {
         for folder in folders {
             self.walk(folder, &mut seen)?;
         }
+        // A paused walk didn't see everything, so nothing unseen is gone.
+        if self.paused {
+            return Ok(());
+        }
         for path in self.state.paths().unwrap_or_default() {
             if !seen.contains(&path) {
                 self.remove(&path);
             }
         }
         Ok(())
+    }
+
+    /// Writes progress about once a second, and notices a pause.
+    fn report(&mut self, phase: &str, done: u64, total: Option<u64>) {
+        if self.reported.elapsed() < Duration::from_secs(1) {
+            return;
+        }
+        self.reported = Instant::now();
+        self.paused |= content::is_paused();
+        let phase = phase.to_string();
+        content::write_progress(Some(&content::Progress { phase, done, total }));
     }
 
     /// Paths the journal or watcher reported: files are (re)read or dropped; folders (moved or
@@ -187,6 +250,11 @@ impl Run<'_> {
     }
 
     fn file(&mut self, path: &Path) -> Result<(), Hung> {
+        self.files_seen += 1;
+        self.report("reading", self.files_seen, None);
+        if self.paused {
+            return Ok(());
+        }
         let Some(kind) = Kind::of(path) else {
             return Ok(());
         };
@@ -205,9 +273,13 @@ impl Run<'_> {
             modified: meta.last_write_time() as i64,
             status: Status::Working,
         };
+        let needs_vectors = |state: &State, before: &Seen| {
+            self.embed && before.status == Status::Indexed && !state.embedded(&key).unwrap_or(true)
+        };
         if let Ok(Some(before)) = self.state.get(&key)
             && before.size == now.size
             && before.modified == now.modified
+            && !needs_vectors(self.state, &before)
         {
             // Unchanged, including files quarantined in this version.
             return Ok(());
@@ -223,6 +295,14 @@ impl Run<'_> {
                 match self.store.replace(self.writer, &key, &passages) {
                     Ok(()) => {
                         self.indexed += 1;
+                        // Old vectors describe old text.
+                        let _ = self.state.set_vectors(&key, &[]);
+                        self.vectors_changed = true;
+                        if self.embed {
+                            self.pending.extend(
+                                passages.into_iter().map(|c| (key.clone(), c.line, c.text)),
+                            );
+                        }
                         (Status::Indexed, None)
                     }
                     Err(e) => (Status::Skipped, Some(e.to_string())),
@@ -250,7 +330,148 @@ impl Run<'_> {
         self.store.remove(self.writer, path);
         let _ = self.state.remove(path);
         self.removed += 1;
+        self.vectors_changed = true;
     }
+
+    /// Embeds the queued passages: a bulk run on the discrete GPU if there is one, otherwise
+    /// on the CPU. On battery a bulk run waits for mains power; its files stay without vectors
+    /// and the next run picks them up.
+    fn embed_pending(&mut self) {
+        if self.pending.is_empty() || self.paused {
+            return;
+        }
+        let bulk = self.pending.len() >= BULK;
+        if bulk && on_battery() {
+            tracing::info!(
+                "on battery: {} passages wait for mains power",
+                self.pending.len()
+            );
+            self.pending.clear();
+            return;
+        }
+        if self.model.is_none() {
+            let device = bulk
+                .then(discrete_adapter)
+                .flatten()
+                .map_or(Device::Cpu, Device::DirectMl);
+            let loaded = Embedder::load(Weights::Full, device).or_else(|e| {
+                tracing::warn!("{device:?} unavailable ({e}); embedding on the CPU");
+                Embedder::load(Weights::Full, Device::Cpu)
+            });
+            match loaded {
+                Ok(model) => {
+                    tracing::info!("embedding {} passages on {device:?}", self.pending.len());
+                    self.model = Some(model);
+                }
+                Err(e) => {
+                    tracing::error!("no embedding model: {e}");
+                    self.pending.clear();
+                    return;
+                }
+            }
+        }
+        // Background mode starves the model of CPU (on the GPU 7 passages a second instead of
+        // 18, on the CPU 4 passages took 11 s); idle priority still yields to everything else.
+        let process = unsafe { GetCurrentProcess() };
+        let _ = unsafe { SetPriorityClass(process, PROCESS_MODE_BACKGROUND_END) };
+        let _ = unsafe { SetPriorityClass(process, IDLE_PRIORITY_CLASS) };
+        let pending = std::mem::take(&mut self.pending);
+        let mut saved = Instant::now();
+        // Batches span files, so small files don't send the GPU padding; a file's vectors are
+        // stored once all of its passages are done, and not at all if any failed.
+        let mut file: Option<(&str, Vec<_>, bool)> = None;
+        let mut done = 0;
+        for batch in pending.chunks(BATCH) {
+            let texts: Vec<&str> = batch.iter().map(|p| p.2.as_str()).collect();
+            let model = self.model.as_mut().expect("loaded above");
+            let vectors = model
+                .embed(&texts)
+                .inspect_err(|e| tracing::warn!("embedding {}: {e}", batch[0].0))
+                .ok();
+            for (i, (path, line, _)) in batch.iter().enumerate() {
+                if file.as_ref().is_none_or(|f| f.0 != path) {
+                    if let Some((path, rows, ok)) = file.take() {
+                        self.store_vectors(path, &rows, ok);
+                    }
+                    file = Some((path, Vec::new(), true));
+                }
+                let current = file.as_mut().expect("set above");
+                match &vectors {
+                    Some(v) => {
+                        let (scale, data) = vectors::quantize(&v[i]);
+                        current.1.push((*line, scale, data));
+                    }
+                    None => current.2 = false,
+                }
+            }
+            done += batch.len();
+            if saved.elapsed() > SAVE_VECTORS_EVERY {
+                self.save_vectors();
+                saved = Instant::now();
+            }
+            self.report("embedding", done as u64, Some(pending.len() as u64));
+            // The file in progress and those not reached keep no vectors; the next run embeds them.
+            if self.paused {
+                file = None;
+                break;
+            }
+        }
+        if let Some((path, rows, ok)) = file {
+            self.store_vectors(path, &rows, ok);
+        }
+        // Frees the GPU before the process exits.
+        self.model = None;
+        let _ = unsafe { SetPriorityClass(process, PROCESS_MODE_BACKGROUND_BEGIN) };
+    }
+
+    fn store_vectors(&mut self, path: &str, rows: &[(u32, f32, Vec<i8>)], ok: bool) {
+        if ok && !rows.is_empty() && self.state.set_vectors(path, rows).is_ok() {
+            self.embedded += rows.len();
+            self.vectors_changed = true;
+        }
+    }
+
+    /// Writes every vector to the file the app searches, if any changed.
+    fn save_vectors(&mut self) {
+        if !self.vectors_changed {
+            return;
+        }
+        let saved = self
+            .state
+            .vectors()
+            .map_err(|e| e.to_string())
+            .and_then(|v| v.save(&content::vectors_path()).map_err(|e| e.to_string()));
+        match saved {
+            Ok(()) => self.vectors_changed = false,
+            Err(e) => tracing::error!("saving vectors: {e}"),
+        }
+    }
+}
+
+/// The DXGI index (DirectML's device id) of the adapter with the most dedicated memory, if it
+/// has at least 2 GB: a discrete GPU, not the integrated one or a software adapter.
+fn discrete_adapter() -> Option<i32> {
+    let factory: IDXGIFactory1 = unsafe { CreateDXGIFactory1().ok()? };
+    let mut best: Option<(i32, usize)> = None;
+    for i in 0.. {
+        let Ok(adapter) = (unsafe { factory.EnumAdapters1(i) }) else {
+            break;
+        };
+        let Ok(desc) = (unsafe { adapter.GetDesc1() }) else {
+            continue;
+        };
+        let software = desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0;
+        let memory = desc.DedicatedVideoMemory;
+        if !software && memory >= 2 << 30 && best.is_none_or(|(_, m)| memory > m) {
+            best = Some((i as i32, memory));
+        }
+    }
+    best.map(|(i, _)| i)
+}
+
+fn on_battery() -> bool {
+    let mut status = SYSTEM_POWER_STATUS::default();
+    unsafe { GetSystemPowerStatus(&mut status) }.is_ok() && status.ACLineStatus == 0
 }
 
 /// Extraction on a thread of its own, so a file that hangs the parser can be given up on.

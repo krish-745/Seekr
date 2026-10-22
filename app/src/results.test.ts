@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyBatches, firstVisible, scrollFor, visibleRange, type Item } from "./results";
+import { applyBatches, firstVisible, marks, scrollFor, visibleRange, type Item } from "./results";
 
 const item = (id: string): Item => ({ id, title: id, subtitle: "", preview: "", icon: null, actions: [] });
 
@@ -45,5 +45,17 @@ describe("virtual list", () => {
   it("numbers from the first fully visible row", () => {
     expect(firstVisible(0, 44)).toBe(0);
     expect(firstVisible(10, 44)).toBe(1);
+  });
+});
+
+describe("marks", () => {
+  it("marks query words case-insensitively and ignores short words and filters", () => {
+    expect(marks("The Invoice is due", "invoice ext:pdf is")).toEqual([
+      { text: "The ", hit: false },
+      { text: "Invoice", hit: true },
+      { text: " is due", hit: false },
+    ]);
+    expect(marks("a+b (x)", "(x)")).toEqual([{ text: "a+b ", hit: false }, { text: "(x)", hit: true }]);
+    expect(marks("plain", "")).toEqual([{ text: "plain", hit: false }]);
   });
 });

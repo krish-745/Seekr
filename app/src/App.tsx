@@ -3,6 +3,7 @@ import { createEffect, createMemo, createSignal, For, Match, on, onMount, Show, 
 import {
   applyBatches,
   firstVisible,
+  marks,
   scrollFor,
   visibleRange,
   type Batch,
@@ -87,7 +88,7 @@ function App() {
       if (!item?.id.startsWith("path:")) return;
       const dark = matchMedia("(prefers-color-scheme: dark)").matches;
       previewTimer = setTimeout(() => {
-        invoke<Preview>("preview", { path: item.id.slice(5), dark }).then((p) => {
+        invoke<Preview>("preview", { path: item.id.slice(5), dark, line: item.line ?? null }).then((p) => {
           if (current()?.id === item.id) setPreview(p);
         });
       }, 60);
@@ -343,13 +344,31 @@ function App() {
                   </Match>
                   <Match when={previewOf("code")}>
                     {(p) => (
-                      <pre class="code">
+                      <pre class="code" classList={{ numbered: p().focus !== undefined }}>
                         <For each={p().lines}>
-                          {(line) => (
-                            <div>
-                              <For each={line}>{([color, text]) => <span style={{ color }}>{text}</span>}</For>
-                            </div>
-                          )}
+                          {(line, i) => {
+                            const number = p().first + i();
+                            const focused = number === p().focus;
+                            return (
+                              <div
+                                classList={{ focus: focused }}
+                                ref={(el) => focused && requestAnimationFrame(() => el.scrollIntoView({ block: "center" }))}
+                              >
+                                <Show when={p().focus !== undefined}>
+                                  <span class="gutter">{number}</span>
+                                </Show>
+                                <For each={line}>
+                                  {([color, text]) => (
+                                    <span style={{ color }}>
+                                      <For each={marks(text, query())}>
+                                        {(m) => (m.hit ? <mark>{m.text}</mark> : m.text)}
+                                      </For>
+                                    </span>
+                                  )}
+                                </For>
+                              </div>
+                            );
+                          }}
                         </For>
                         <Show when={p().truncated}>
                           <div class="more">…</div>
