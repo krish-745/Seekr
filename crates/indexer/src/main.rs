@@ -6,7 +6,7 @@
 //! (`EXTRACT_TIMEOUT`), the mark survives and the next run quarantines the file until it changes.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     io::{self, BufRead},
     os::windows::fs::MetadataExt,
     path::{Path, PathBuf},
@@ -225,6 +225,9 @@ impl Run<'_> {
     /// Paths the journal or watcher reported: files are (re)read or dropped; folders (moved or
     /// renamed in) are walked, and what used to be under them but no longer is gets dropped.
     fn changed(&mut self, folders: &[PathBuf], paths: &[PathBuf]) -> Result<(), Hung> {
+        // Every known path by its lower-case form, read once: reading them all again for each
+        // deleted file made a batch of thousands quadratic.
+        let mut known: Option<HashMap<String, String>> = None;
         for path in paths {
             if !inside(folders, path) {
                 continue;
@@ -234,31 +237,55 @@ impl Run<'_> {
             {
                 continue;
             }
+            let text = path.display().to_string();
+            let prefix = format!("{text}\\").to_lowercase();
             if path.is_dir() {
                 let mut seen = HashSet::new();
                 self.walk(path, &mut seen)?;
-                let prefix = format!("{}\\", path.display()).to_lowercase();
-                for known in self.state.paths().unwrap_or_default() {
-                    if known.to_lowercase().starts_with(&prefix) && !seen.contains(&known) {
-                        self.remove(&known);
+                let all = known.get_or_insert_with(|| self.known_paths());
+                let gone: Vec<String> = all
+                    .iter()
+                    .filter(|(lower, original)| {
+                        lower.starts_with(&prefix) && !seen.contains(*original)
+                    })
+                    .map(|(lower, _)| lower.clone())
+                    .collect();
+                for lower in gone {
+                    if let Some(original) = all.remove(&lower) {
+                        self.remove(&original);
                     }
                 }
+                all.extend(seen.into_iter().map(|p| (p.to_lowercase(), p)));
             } else if path.exists() {
                 self.file(path)?;
+                if let Some(all) = known.as_mut() {
+                    all.insert(text.to_lowercase(), text);
+                }
             } else {
                 // Gone: the file itself, or a folder that held indexed files.
-                let text = path.display().to_string();
-                let prefix = format!("{text}\\").to_lowercase();
-                for known in self.state.paths().unwrap_or_default() {
-                    if known.eq_ignore_ascii_case(&text)
-                        || known.to_lowercase().starts_with(&prefix)
-                    {
-                        self.remove(&known);
+                let all = known.get_or_insert_with(|| self.known_paths());
+                if let Some(original) = all.remove(&text.to_lowercase()) {
+                    self.remove(&original);
+                    continue;
+                }
+                let gone: Vec<String> = all
+                    .keys()
+                    .filter(|lower| lower.starts_with(&prefix))
+                    .cloned()
+                    .collect();
+                for lower in gone {
+                    if let Some(original) = all.remove(&lower) {
+                        self.remove(&original);
                     }
                 }
             }
         }
         Ok(())
+    }
+
+    fn known_paths(&self) -> HashMap<String, String> {
+        let paths = self.state.paths().unwrap_or_default();
+        paths.into_iter().map(|p| (p.to_lowercase(), p)).collect()
     }
 
     /// Indexes every eligible file under `root`, honouring .gitignore and skipping hidden and

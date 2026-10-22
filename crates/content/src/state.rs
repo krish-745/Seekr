@@ -61,7 +61,7 @@ impl State {
 
     fn with(conn: Connection) -> rusqlite::Result<Self> {
         conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
+            "PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;
              CREATE TABLE IF NOT EXISTS files (
                  path TEXT PRIMARY KEY, size INTEGER NOT NULL, modified INTEGER NOT NULL,
                  status TEXT NOT NULL, note TEXT);

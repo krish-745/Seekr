@@ -16,6 +16,11 @@ Run on the development PC: Windows 11, Core i7, RTX 5050 Laptop GPU, NVMe C: wit
 | A deck of zip-bomb slides | A pptx of 300 slides, each inflating to 40 MB with no text | **Fixed**: each part was capped at 32 MB but the file wasn't, so a preview took 6.35 s of a core. All parts together now stop at 96 MB: 175 ms |
 | Crash recovery: content indexer | 4,000 Markdown files; the indexer killed 0.4, 0.8 and 1.2 s into a run, then left to finish | **Fixed**: the files being read at each kill were quarantined for good, as if they had crashed it (2 of 4,000), which Seekr quitting or Windows shutting down mid-pass would also do. Now a file left mid-read gets one more try, and only a second stop on it quarantines it; a hang (a file taking over 30 s) is still quarantined at once. After the fix: all 4,000 indexed |
 | Mass file churn: file names | A synthetic 2.02-million-name index, then 4 million temporary files created and deleted, as builds and installs do (`fsindex` test `churn`) | **Fixed**: deleted names kept their slots until Seekr restarted, so slots tripled to 6.02 million and a search for "rpt" went from 23.6 to 58.0 ms. The index now compacts when deleted slots pass a quarter of the live names, at its five-minute save: 6.02 to 2.02 million slots in about 1 s (searches wait for that second), and "rpt" back to 26.3 ms |
+| Mass file churn: content | 3,000 indexed notes, then 5,000 created, 1,500 deleted, 1,000 moved between folders, 500 rewritten and a folder moved, reported as changed paths the way the app does | Passed: the index matched the disk exactly (6,500 files, none missing or stale). **Fixed** on the way: each deleted path reread every known path from the database, so deletions were quadratic: 3,000 of 12,000 files took 5.6 s, now 1.0 s. The state database also stops forcing a disk flush at every write (WAL with `synchronous = NORMAL`, still crash-safe) |
+
+Indexing files that were written a moment earlier is slow on this PC (16.9 s for 3,000 new
+files, 2.4 s for the same files read again): the time goes to Windows Defender scanning each new
+file as it is first opened, outside Seekr.
 
 PDFs aren't read at all yet (no PDF text extraction is built), so malformed PDFs can't reach
 the extractor.
