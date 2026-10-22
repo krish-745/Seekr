@@ -10,7 +10,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State, ipc::Channel};
 
 use crate::{
-    apps, builtin, calc, clipboard, clips, content, direct, emoji, files, notes, rank::Ranker,
+    ai, apps, builtin, calc, clipboard, clips, content, direct, emoji, files, notes, rank::Ranker,
     switcher, system, web::Web,
 };
 
@@ -86,7 +86,9 @@ pub async fn query(
     let windows = switcher::mode(&text).map(str::to_string);
     let glyphs = emoji::mode(&text);
     let (note, todo) = (notes::note_mode(&text), notes::todo_mode(&text));
+    let question = ai::mode(&text);
     if clips::mode(&text).is_some()
+        || question.is_some()
         || windows.is_some()
         || glyphs.is_some()
         || note.is_some()
@@ -105,6 +107,7 @@ pub async fn query(
                 .map_err(|e| e.to_string())?
             }
             None => match (glyphs, note, todo) {
+                _ if question.is_some() => ai::items(&app, question.unwrap_or("")),
                 (Some(words), ..) => emoji::items(words),
                 (_, Some(words), _) => notes::note_items(words),
                 (.., Some(words)) => notes::todo_items(words),

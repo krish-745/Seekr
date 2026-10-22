@@ -351,3 +351,46 @@ kbd {
   color: inherit;
   font: 13px/1.6 "Cascadia Mono", Consolas, monospace;
 }
+
+/* An AI answer: the questions, the replies with their citations, and the passages given. */
+.answer .question {
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+
+.answer .reply {
+  margin: 0 0 16px;
+  white-space: pre-wrap;
+  line-height: 1.55;
+}
+
+.answer .cite {
+  margin: 0 1px;
+  padding: 0 5px;
+  border: none;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+  color: inherit;
+  font: inherit;
+  font-size: 0.8em;
+  cursor: pointer;
+}
+
+.answer .sources {
+  margin: 8px 0 0;
+  padding-left: 28px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.answer .sources li {
+  cursor: pointer;
+}
+
+.answer .sources li:hover {
+  text-decoration: underline;
+}
+
+.answer .error {
+  color: #e5534b;
+}

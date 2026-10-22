@@ -77,6 +77,21 @@ Type `:` and a word: `:fire`, `:laugh`, `:indian rupee`, `:double arrow`, `:gree
 
 `note pick up the parcel from the post office` saves a note in `Documents\Seekr Notes`; `note` lists recent notes, and Tab → Edit here edits one in place (Ctrl+S saves). `todo call the bank by friday` adds a to-do due on Friday; `todo` shows the list, and Enter marks one done.
 
+## Ask AI
+
+Type `?` and a question about your files, such as `?when is the rent due`. The answer cites the passages it used; click a number to open that file. Ask a follow-up the same way, and press Esc to stop an answer. The model runs on your GPU and stops after ten idle minutes.
+
+To use a cloud model instead, set its key in your own environment (never in a file you share) and name it in `%APPDATA%\Seekr\config.toml`:
+
+```powershell
+[Environment]::SetEnvironmentVariable('GEMINI_API_KEY', 'your-key', 'User')   # or XAI_API_KEY for Grok
+```
+
+```toml
+ai = "gemini"          # or "grok"
+# api_model = "gemini-2.5-flash"
+```
+
 ## Develop
 
 Requirements: Windows 11, Rust (stable, MSVC), Visual Studio Build Tools with the C++ workload, Node.js 20+.

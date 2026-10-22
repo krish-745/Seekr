@@ -43,6 +43,12 @@ pub struct Config {
     pub search: String,
     /// Added or replaced web shortcuts: key to URL, with `%s` for the words typed.
     pub shortcuts: BTreeMap<String, String>,
+    /// Where AI answers come from: "local" (the model on this PC), "gemini" or "grok".
+    pub ai: String,
+    /// The local model's file name in `llm\models`, without ".gguf"; empty for the default.
+    pub ai_model: String,
+    /// The cloud API's model; empty for its default.
+    pub api_model: String,
 }
 
 impl Default for Config {
@@ -51,6 +57,9 @@ impl Default for Config {
             hotkey: "Alt+Space".into(),
             search: "g".into(),
             shortcuts: BTreeMap::new(),
+            ai: "local".into(),
+            ai_model: String::new(),
+            api_model: String::new(),
         }
     }
 }

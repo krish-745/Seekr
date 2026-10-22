@@ -12,7 +12,8 @@ them, and the RTX 5050's peak memory and mean power while answering.
     python bench/llm/bench.py [candidate ...]
 
 Candidates: ollama (qwen3.5:9b as installed), llama-9b-q4km (the same GGUF in llama-server),
-llama-9b-iq4xs, llama-4b-q4km, gemini (needs GEMINI_API_KEY in the user's environment).
+llama-9b-iq4xs, llama-4b-q4km, gemini and grok (need GEMINI_API_KEY or XAI_API_KEY in the
+user's environment; SEEKR_API_MODEL overrides the model).
 Results go to bench/llm/results.json.
 """
 
@@ -175,15 +176,15 @@ def wait_ready(url: str, seconds: int):
     raise TimeoutError(url)
 
 
-def gemini_key() -> str:
-    key = os.environ.get("GEMINI_API_KEY")
+def user_key(name: str) -> str:
+    key = os.environ.get(name)
     if not key:
         # Set with [Environment]::SetEnvironmentVariable(..., 'User'); read without printing it.
         key = subprocess.run(["powershell", "-NoProfile", "-Command",
-                              "[Environment]::GetEnvironmentVariable('GEMINI_API_KEY','User')"],
+                              f"[Environment]::GetEnvironmentVariable('{name}','User')"],
                              capture_output=True, text=True).stdout.strip()
     if not key:
-        raise SystemExit("GEMINI_API_KEY isn't set in your user environment")
+        raise SystemExit(f"{name} isn't set in your user environment")
     return key
 
 
@@ -258,18 +259,17 @@ def ollama():
     return start, ask
 
 
-def gemini(model: str):
-    key = gemini_key()
+def cloud(url: str, key_name: str, model: str, extra: dict):
+    key = user_key(key_name)
 
     def start():
         return None
 
     def ask(text):
         body = {"model": model, "stream": True, "max_tokens": MAX_TOKENS, "temperature": 0.2,
-                "stream_options": {"include_usage": True}, "reasoning_effort": "none",
+                "stream_options": {"include_usage": True}, **extra,
                 "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": text}]}
-        return stream("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-                      body, {"Authorization": f"Bearer {key}"}, sse=True)
+        return stream(url, body, {"Authorization": f"Bearer {key}"}, sse=True)
     return start, ask
 
 
@@ -278,7 +278,11 @@ CANDIDATES = {
     "llama-9b-q4km": lambda: llama(OLLAMA_BLOB),
     "llama-9b-iq4xs": lambda: llama(LLM / "models" / "Qwen3.5-9B-IQ4_XS.gguf"),
     "llama-4b-q4km": lambda: llama(LLM / "models" / "Qwen3.5-4B-Q4_K_M.gguf"),
-    "gemini": lambda: gemini(os.environ.get("SEEKR_GEMINI_MODEL", "gemini-2.5-flash")),
+    "gemini": lambda: cloud("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+                            "GEMINI_API_KEY", os.environ.get("SEEKR_API_MODEL", "gemini-2.5-flash"),
+                            {"reasoning_effort": "none"}),
+    "grok": lambda: cloud("https://api.x.ai/v1/chat/completions", "XAI_API_KEY",
+                          os.environ.get("SEEKR_API_MODEL", "grok-4-fast-non-reasoning"), {}),
 }
 
 

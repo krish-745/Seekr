@@ -1,3 +1,4 @@
+mod ai;
 mod apps;
 mod builtin;
 mod calc;
@@ -302,6 +303,8 @@ pub fn run() {
                 common::Config::default()
             });
             app.manage(web::Web::new(&config.shortcuts, &config.search));
+            app.manage(ai::Ai::new(&config));
+            ai::start_reaper(app.handle());
             indexer::start(app.handle());
             content::start_reaper(app.handle());
             register_hotkey(app.handle());
@@ -330,6 +333,8 @@ pub fn run() {
             hide,
             query::query,
             query::run_action,
+            ai::ask,
+            ai::stop_answer,
             notes::read_note,
             notes::save_note_text,
             query::toggle_pin,

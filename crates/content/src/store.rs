@@ -181,6 +181,46 @@ impl Store {
         }
         Ok(hits)
     }
+
+    /// Whole passages for a question, best first: any of its words may match (a question has
+    /// words no passage shares), and no file gives more than two. Each comes as (path, the line
+    /// it starts on, its text).
+    pub fn passages(
+        &self,
+        reader: &IndexReader,
+        question: &str,
+        limit: usize,
+    ) -> tantivy::Result<Vec<(String, u32, String)>> {
+        let searcher = reader.searcher();
+        let parser = QueryParser::for_index(&self.index, vec![self.body]);
+        let (query, _errors) = parser.parse_query_lenient(question);
+        let top: Vec<(Score, DocAddress)> =
+            searcher.search(&query, &TopDocs::with_limit(limit * 3).order_by_score())?;
+        let mut found: Vec<(String, u32, String)> = Vec::new();
+        for (_, address) in top {
+            let doc: TantivyDocument = searcher.doc(address)?;
+            let field = |f| {
+                doc.get_first(f)
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            };
+            let (Some(path), Some(text)) = (field(self.path), field(self.body)) else {
+                continue;
+            };
+            if found.iter().filter(|p| p.0 == path).count() >= 2 {
+                continue;
+            }
+            let line = doc
+                .get_first(self.line)
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1);
+            found.push((path, line as u32, text));
+            if found.len() == limit {
+                break;
+            }
+        }
+        Ok(found)
+    }
 }
 
 #[cfg(test)]
@@ -246,6 +286,15 @@ mod tests {
             hits[0].line, 6,
             "the matching line, two below the passage start"
         );
+        let found = store
+            .passages(&reader, "what is a quokka invoice", 10)
+            .unwrap();
+        assert!(
+            found.iter().any(|p| p.0 == r"C:\c.txt" && p.1 == 4),
+            "any word will do"
+        );
+        assert!(found.iter().any(|p| p.0 == r"C:\a.md"));
+        assert_eq!(found.iter().filter(|p| p.0 == r"C:\a.md").count(), 2);
 
         assert_eq!(
             store.passage(&reader, r"C:\a.md", 9).as_deref(),

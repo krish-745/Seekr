@@ -46,6 +46,23 @@ const PREFIXES: Record<string, string> = {
   todosmode: "todo ",
 };
 
+type Source = { n: number; path: string; line: number; name: string };
+type AiEvent =
+  | { kind: "sources"; sources: Source[] }
+  | { kind: "status"; text: string }
+  | { kind: "token"; text: string }
+  | { kind: "done"; seconds: number; first: number }
+  | { kind: "error"; text: string };
+/** A conversation with the AI: questions and answers so far, and the passages it was given. */
+type Answer = {
+  turns: { question: string; text: string }[];
+  sources: Source[];
+  busy: boolean;
+  status?: string;
+  error?: string;
+  took?: string;
+};
+
 /** Row height in CSS px; must match `.row` in App.css. */
 const ROW = 44;
 
@@ -62,6 +79,7 @@ function App() {
   const [actionIndex, setActionIndex] = createSignal(0);
   // An item waiting for a second Enter before it goes to the Recycle Bin.
   const [confirming, setConfirming] = createSignal<{ item: Item; action: string } | undefined>();
+  const [answer, setAnswer] = createSignal<Answer | undefined>();
   // A note being edited in the preview pane.
   const [editing, setEditing] = createSignal<{ path: string; text: string } | undefined>();
 
@@ -183,6 +201,8 @@ function App() {
 
   function search(text: string) {
     setQuery(text);
+    // Leaving `?` ends the conversation.
+    if (!text.trimStart().startsWith("?") && !answer()?.busy) setAnswer(undefined);
     const id = ++nextId;
     typedAt.set(id, performance.now());
     const onBatch = new Channel<Batch>();
@@ -204,6 +224,15 @@ function App() {
     if (!item || !actionId) return;
     if (actionId === "setup") {
       openSetup(false);
+      return;
+    }
+    if (actionId === "ask") {
+      ask(input.value.trimStart().slice(1).trim());
+      return;
+    }
+    if (actionId === "askmode") {
+      input.value = "?";
+      search(input.value);
       return;
     }
     if (actionId === "editnote") {
@@ -243,6 +272,38 @@ function App() {
     }
   }
 
+  function ask(question: string) {
+    const before = answer();
+    if (!question || before?.busy) return;
+    const followUp = !!before && before.turns.length > 0 && !before.error;
+    setAnswer({
+      turns: [...(followUp ? before.turns : []), { question, text: "" }],
+      sources: followUp ? before.sources : [],
+      busy: true,
+    });
+    const onEvent = new Channel<AiEvent>();
+    onEvent.onmessage = (e) => {
+      const a = answer();
+      if (!a) return;
+      if (e.kind === "sources") setAnswer({ ...a, sources: e.sources });
+      else if (e.kind === "status") setAnswer({ ...a, status: e.text });
+      else if (e.kind === "token") {
+        const turns = a.turns.slice();
+        const last = turns[turns.length - 1];
+        turns[turns.length - 1] = { ...last, text: last.text + e.text };
+        setAnswer({ ...a, turns, status: undefined });
+      } else if (e.kind === "done")
+        setAnswer({ ...a, busy: false, status: undefined, took: `${e.first.toFixed(1)} s to start, ${e.seconds.toFixed(1)} s in all` });
+      else setAnswer({ ...a, busy: false, status: undefined, error: e.text });
+    };
+    invoke("ask", { question, followUp, onEvent });
+  }
+
+  function openSource(n: number) {
+    const source = answer()?.sources.find((s) => s.n === n);
+    if (source) invoke("run_action", { item: `path:${source.path}`, action: "open", query: input.value });
+  }
+
   function saveNote() {
     const note = editing();
     if (!note) return;
@@ -254,6 +315,12 @@ function App() {
   }
 
   function onKey(e: KeyboardEvent) {
+    if (e.key === "Escape" && answer()?.busy) {
+      invoke("stop_answer");
+      setAnswer({ ...answer()!, busy: false, status: undefined, took: "Stopped" });
+      e.preventDefault();
+      return;
+    }
     if (editing()) {
       // The editor has the keys, apart from saving and leaving.
       if (e.ctrlKey && e.key === "s") saveNote();
@@ -424,7 +491,48 @@ function App() {
               />
             )}
           </Show>
-          <Show when={!editing() && current()}>
+          <Show when={!editing() && answer()}>
+            {(a) => (
+              <div class="answer">
+                <For each={a().turns}>
+                  {(turn) => (
+                    <>
+                      <p class="question">{turn.question}</p>
+                      <p class="reply">
+                        <For each={turn.text.split(/(\[\d+\])/)}>
+                          {(part) => {
+                            const cited = /^\[(\d+)\]$/.exec(part);
+                            return cited ? (
+                              <button class="cite" title="Open this file" onClick={() => openSource(Number(cited[1]))}>
+                                {cited[1]}
+                              </button>
+                            ) : (
+                              part
+                            );
+                          }}
+                        </For>
+                      </p>
+                    </>
+                  )}
+                </For>
+                <Show when={a().status}>{(status) => <p class="subtitle">{status()}</p>}</Show>
+                <Show when={a().error}>{(error) => <p class="error">Couldn't answer: {error()}</p>}</Show>
+                <Show when={a().took}>{(took) => <p class="subtitle">{took()}</p>}</Show>
+                <Show when={a().sources.length > 0}>
+                  <ol class="sources">
+                    <For each={a().sources}>
+                      {(s) => (
+                        <li value={s.n} title={s.path} onClick={() => openSource(s.n)}>
+                          {s.name} · line {s.line}
+                        </li>
+                      )}
+                    </For>
+                  </ol>
+                </Show>
+              </div>
+            )}
+          </Show>
+          <Show when={!editing() && !answer() && current()}>
             {(item) => (
               <>
                 <Show when={item().icon}>{(src) => <img class="preview-icon" src={src()} alt="" />}</Show>
@@ -528,7 +636,7 @@ function App() {
                 <Show when={(current()?.actions.length ?? 0) > 0}>
                   <span><kbd>Tab</kbd> Actions</span>
                 </Show>
-                <span><kbd>Esc</kbd> {actionsOpen() ? "Back" : "Close"}</span>
+                <span><kbd>Esc</kbd> {answer()?.busy ? "Stop" : actionsOpen() ? "Back" : "Close"}</span>
               </>
             }
           >

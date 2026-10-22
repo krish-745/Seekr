@@ -183,16 +183,7 @@ pub fn warm(app: &AppHandle) {
         let state = app.state::<Search>();
         let mut meaning = state.meaning.lock().unwrap();
         meaning.used = Some(Instant::now());
-        if meaning.model.is_none() && embed::available(Weights::Int8) {
-            let start = Instant::now();
-            match Embedder::load(Weights::Int8, Device::Cpu) {
-                Ok(model) => {
-                    tracing::info!("query model loaded in {:?}", start.elapsed());
-                    meaning.model = Some(model);
-                }
-                Err(e) => tracing::warn!("no meaning search: {e}"),
-            }
-        }
+        meaning.load();
     });
 }
 
@@ -224,20 +215,7 @@ pub fn search(app: &AppHandle, parsed: &Parsed, shown: &HashSet<String>) -> Vec<
     }
     let state = app.state::<Search>();
     let mut open = state.index.lock().unwrap();
-    if open.is_none() {
-        let dir = content::index_dir();
-        if !dir.join("meta.json").exists() {
-            return Vec::new();
-        }
-        match Store::open(&dir).and_then(|s| s.reader().map(|r| (s, r))) {
-            Ok(opened) => *open = Some(opened),
-            Err(e) => {
-                tracing::warn!("content index unavailable: {e}");
-                return Vec::new();
-            }
-        }
-    }
-    let Some((store, reader)) = open.as_ref() else {
+    let Some((store, reader)) = open_index(&mut open) else {
         return Vec::new();
     };
     let keyword = store
@@ -299,7 +277,115 @@ pub fn search(app: &AppHandle, parsed: &Parsed, shown: &HashSet<String>) -> Vec<
         .collect()
 }
 
+/// The full-text index, opened the first time it is needed once the indexer has made one.
+fn open_index(open: &mut Option<(Store, IndexReader)>) -> Option<&(Store, IndexReader)> {
+    if open.is_none() {
+        let dir = content::index_dir();
+        if !dir.join("meta.json").exists() {
+            return None;
+        }
+        match Store::open(&dir).and_then(|s| s.reader().map(|r| (s, r))) {
+            Ok(opened) => *open = Some(opened),
+            Err(e) => {
+                tracing::warn!("content index unavailable: {e}");
+                return None;
+            }
+        }
+    }
+    open.as_ref()
+}
+
+/// A passage of a file, given to the AI to answer from.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Passage {
+    pub path: String,
+    /// The line it starts on.
+    pub line: u32,
+    pub text: String,
+}
+
+/// Passages for a question, up to `budget` characters, fused from keyword and meaning search
+/// the way content results are, leaving out those in `skip` (already given).
+pub fn retrieve(app: &AppHandle, question: &str, budget: usize, skip: &[Passage]) -> Vec<Passage> {
+    let state = app.state::<Search>();
+    let words: String = question
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '\'' {
+                c
+            } else {
+                ' '
+            }
+        })
+        .collect();
+    let meaning = {
+        let mut meaning = state.meaning.lock().unwrap();
+        meaning.load();
+        meaning.search(question)
+    };
+    let mut open = state.index.lock().unwrap();
+    let Some((store, reader)) = open_index(&mut open) else {
+        return Vec::new();
+    };
+    let keyword = store
+        .passages(reader, &words, CANDIDATES)
+        .unwrap_or_else(|e| {
+            tracing::warn!("passage search failed: {e}");
+            Vec::new()
+        });
+    let mut fused: Vec<(f32, String, u32, Option<String>)> = Vec::new();
+    let mut add = |path: &str, line: u32, rank: usize, text: Option<String>| {
+        let gain = 1.0 / (RRF_K + rank as f32 + 1.0);
+        match fused.iter_mut().find(|f| f.1 == path && f.2 == line) {
+            Some(f) => f.0 += gain,
+            None => fused.push((gain, path.to_string(), line, text)),
+        }
+    };
+    for (rank, (path, line, text)) in keyword.into_iter().enumerate() {
+        add(&path, line, rank, Some(text));
+    }
+    for (rank, hit) in meaning
+        .iter()
+        .filter(|h| h.score >= MEANING_FLOOR)
+        .enumerate()
+    {
+        add(&hit.path, hit.line, rank, None);
+    }
+    fused.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let mut chosen = Vec::new();
+    let mut size = 0;
+    for (_, path, line, text) in fused {
+        if skip.iter().any(|p| p.path == path && p.line == line) {
+            continue;
+        }
+        let Some(text) = text.or_else(|| store.passage(reader, &path, line)) else {
+            continue;
+        };
+        if size + text.len() > budget {
+            continue;
+        }
+        size += text.len();
+        chosen.push(Passage { path, line, text });
+    }
+    chosen
+}
+
 impl Meaning {
+    /// Loads the query model if it isn't loaded and is installed.
+    fn load(&mut self) {
+        if self.model.is_some() || !embed::available(Weights::Int8) {
+            return;
+        }
+        let start = Instant::now();
+        match Embedder::load(Weights::Int8, Device::Cpu) {
+            Ok(model) => {
+                tracing::info!("query model loaded in {:?}", start.elapsed());
+                self.model = Some(model);
+            }
+            Err(e) => tracing::warn!("no meaning search: {e}"),
+        }
+    }
+
     /// The files closest in meaning to `text`; empty without a model or vectors.
     fn search(&mut self, text: &str) -> Vec<vectors::Hit> {
         self.used = Some(Instant::now());

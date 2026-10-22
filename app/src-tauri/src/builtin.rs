@@ -28,6 +28,11 @@ const HISTORY: Action = Action {
     id: "cliphistory",
     label: "Show",
 };
+/// The panel types `?` for this one; Rust never sees it.
+const ASK_MODE: Action = Action {
+    id: "askmode",
+    label: "Ask",
+};
 /// The panel types `note ` or `todo ` for these; Rust never sees them.
 const NOTES: Action = Action {
     id: "notesmode",
@@ -59,6 +64,13 @@ const CONFIG_TEMPLATE: &str = "\
 #
 # The web shortcut for \"Search the web\": g, ddg, b, or one of yours.
 # search = \"ddg\"
+#
+# AI answers: \"local\" (the model on this PC), \"gemini\" (needs GEMINI_API_KEY in your
+# environment) or \"grok\" (needs XAI_API_KEY). ai_model picks the local model, api_model the
+# cloud one.
+# ai = \"local\"
+# ai_model = \"Qwen3.5-9B-IQ4_XS\"
+# api_model = \"gemini-2.5-flash\"
 #
 # Web shortcuts: type the key, a space and your words. %s is where the words go.
 # [shortcuts]
@@ -105,6 +117,15 @@ pub fn all() -> Vec<Item> {
             actions: vec![SETUP],
         },
         indexing(),
+        Item {
+            id: "seekr:ask".into(),
+            title: "Ask AI".into(),
+            subtitle: "Type ? and a question about your files".into(),
+            preview: "Answers questions from the files content search reads, citing the passages it used. The model runs on this PC (or the Gemini or Grok API, if config.toml says so), starts on the first question and stops after ten idle minutes.".into(),
+            icon: None,
+            line: None,
+            actions: vec![ASK_MODE],
+        },
         Item {
             id: "seekr:notes".into(),
             title: "Notes".into(),
