@@ -28,6 +28,15 @@ const HISTORY: Action = Action {
     id: "cliphistory",
     label: "Show",
 };
+/// The panel types `note ` or `todo ` for these; Rust never sees them.
+const NOTES: Action = Action {
+    id: "notesmode",
+    label: "Show",
+};
+const TODOS: Action = Action {
+    id: "todosmode",
+    label: "Show",
+};
 /// The panel types `emoji ` for this one; Rust never sees it.
 const EMOJI: Action = Action {
     id: "emojimode",
@@ -96,6 +105,24 @@ pub fn all() -> Vec<Item> {
             actions: vec![SETUP],
         },
         indexing(),
+        Item {
+            id: "seekr:notes".into(),
+            title: "Notes".into(),
+            subtitle: "Type note and some text to save it".into(),
+            preview: "Notes are Markdown files in Documents\\Seekr Notes, searchable by their words and meaning like any file there. note lists recent ones; Tab offers Edit here, which edits a note in this pane (Ctrl+S saves, Esc cancels).".into(),
+            icon: None,
+            line: None,
+            actions: vec![NOTES],
+        },
+        Item {
+            id: "seekr:todos".into(),
+            title: "To-dos".into(),
+            subtitle: "Type todo, a task and a due date".into(),
+            preview: "todo call the bank by friday adds a to-do due on Friday; todo alone shows the list, soonest due first. Enter marks one done. They live in Documents\\Seekr Notes\\To-dos.md as a Markdown checklist.".into(),
+            icon: None,
+            line: None,
+            actions: vec![TODOS],
+        },
         Item {
             id: "seekr:emoji".into(),
             title: "Search emoji & symbols".into(),

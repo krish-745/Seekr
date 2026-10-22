@@ -16,7 +16,17 @@ import {
 import "./App.css";
 
 /** Actions that change an entry in place and leave the panel open. */
-const STAY_OPEN = new Set(["clippin", "clipunpin", "clipdelete", "winminimize", "winclose", "endtask"]);
+const STAY_OPEN = new Set([
+  "clippin",
+  "clipunpin",
+  "clipdelete",
+  "winminimize",
+  "winclose",
+  "endtask",
+  "tododone",
+  "todoundo",
+  "tododelete",
+]);
 /** Actions that need a second Enter, and what the hint asks. */
 const CONFIRM: Record<string, (item: Item) => string> = {
   recycle: (item) => `Move ${item.title} to the Recycle Bin`,
@@ -28,7 +38,13 @@ const CONFIRM: Record<string, (item: Item) => string> = {
   endtask: (item) => `End ${item.title}`,
 };
 /** Commands that open a list by typing its prefix. */
-const PREFIXES: Record<string, string> = { cliphistory: "clip ", switchwindows: "win ", emojimode: "emoji " };
+const PREFIXES: Record<string, string> = {
+  cliphistory: "clip ",
+  switchwindows: "win ",
+  emojimode: "emoji ",
+  notesmode: "note ",
+  todosmode: "todo ",
+};
 
 /** Row height in CSS px; must match `.row` in App.css. */
 const ROW = 44;
@@ -46,6 +62,8 @@ function App() {
   const [actionIndex, setActionIndex] = createSignal(0);
   // An item waiting for a second Enter before it goes to the Recycle Bin.
   const [confirming, setConfirming] = createSignal<{ item: Item; action: string } | undefined>();
+  // A note being edited in the preview pane.
+  const [editing, setEditing] = createSignal<{ path: string; text: string } | undefined>();
 
   const current = () => items()[selected()];
   // The content-search folder picker, shown on first run and from its command.
@@ -188,6 +206,20 @@ function App() {
       openSetup(false);
       return;
     }
+    if (actionId === "editnote") {
+      const path = item.id.slice(5);
+      setActionsOpen(false);
+      invoke<string>("read_note", { path }).then((text) => setEditing({ path, text }));
+      return;
+    }
+    if (actionId === "todoadd") {
+      // The list comes back with the new to-do in it.
+      invoke("run_action", { item: item.id, action: actionId, query: input.value }).then(() => {
+        input.value = "todo ";
+        search(input.value);
+      });
+      return;
+    }
     if (actionId in PREFIXES) {
       input.value = PREFIXES[actionId];
       search(input.value);
@@ -211,7 +243,27 @@ function App() {
     }
   }
 
+  function saveNote() {
+    const note = editing();
+    if (!note) return;
+    invoke("save_note_text", { path: note.path, text: note.text }).then(() => {
+      setEditing(undefined);
+      input.focus();
+      search(input.value);
+    });
+  }
+
   function onKey(e: KeyboardEvent) {
+    if (editing()) {
+      // The editor has the keys, apart from saving and leaving.
+      if (e.ctrlKey && e.key === "s") saveNote();
+      else if (e.key === "Escape") {
+        setEditing(undefined);
+        input.focus();
+      } else return;
+      e.preventDefault();
+      return;
+    }
     const picker = setup();
     if (picker) {
       const last = picker.folders.length - 1;
@@ -361,7 +413,18 @@ function App() {
           </Show>
         </div>
         <aside class="preview">
-          <Show when={current()}>
+          <Show when={editing()}>
+            {(note) => (
+              <textarea
+                class="editor"
+                value={note().text}
+                spellcheck={false}
+                ref={(el) => requestAnimationFrame(() => el.focus())}
+                onInput={(e) => setEditing({ path: note().path, text: e.currentTarget.value })}
+              />
+            )}
+          </Show>
+          <Show when={!editing() && current()}>
             {(item) => (
               <>
                 <Show when={item().icon}>{(src) => <img class="preview-icon" src={src()} alt="" />}</Show>

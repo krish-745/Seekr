@@ -10,8 +10,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State, ipc::Channel};
 
 use crate::{
-    apps, builtin, calc, clipboard, clips, content, direct, emoji, files, rank::Ranker, switcher,
-    system, web::Web,
+    apps, builtin, calc, clipboard, clips, content, direct, emoji, files, notes, rank::Ranker,
+    switcher, system, web::Web,
 };
 
 #[derive(Clone, Serialize)]
@@ -85,7 +85,13 @@ pub async fn query(
     // `clip …` lists clipboard history, `win …` open windows and `:…` emoji, and nothing else.
     let windows = switcher::mode(&text).map(str::to_string);
     let glyphs = emoji::mode(&text);
-    if clips::mode(&text).is_some() || windows.is_some() || glyphs.is_some() {
+    let (note, todo) = (notes::note_mode(&text), notes::todo_mode(&text));
+    if clips::mode(&text).is_some()
+        || windows.is_some()
+        || glyphs.is_some()
+        || note.is_some()
+        || todo.is_some()
+    {
         let items = match windows {
             Some(words) => {
                 let panel = crate::panel_hwnd(&app).map(|h| h.0 as isize);
@@ -98,9 +104,11 @@ pub async fn query(
                 .await
                 .map_err(|e| e.to_string())?
             }
-            None => match glyphs {
-                Some(words) => emoji::items(words),
-                None => clips::items(&app, clips::mode(&text).unwrap_or("")),
+            None => match (glyphs, note, todo) {
+                (Some(words), ..) => emoji::items(words),
+                (_, Some(words), _) => notes::note_items(words),
+                (.., Some(words)) => notes::todo_items(words),
+                _ => clips::items(&app, clips::mode(&text).unwrap_or("")),
             },
         };
         if engine.is_current(id) {
@@ -249,6 +257,13 @@ pub fn run_action(
     if let Some(clip) = item.strip_prefix("clip:") {
         tracing::info!("run {item} {action}");
         return clips::run(&app, clip, &action);
+    }
+    if let Some(rest) = item
+        .strip_prefix("note:")
+        .or_else(|| item.strip_prefix("todo:"))
+    {
+        tracing::info!("run note or to-do {action}");
+        return notes::run(&app, rest, &action, &query);
     }
     if let Some(glyph) = item.strip_prefix("emoji:") {
         tracing::info!("run emoji {action}");

@@ -339,3 +339,15 @@ kbd {
   pointer-events: none;
   accent-color: var(--accent);
 }
+
+/* A note edited in the preview pane. */
+.editor {
+  width: 100%;
+  height: 100%;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: 13px/1.6 "Cascadia Mono", Consolas, monospace;
+}

@@ -332,7 +332,7 @@ fn span(text: &str) -> Option<(i64, Unit)> {
 }
 
 /// today, tomorrow, yesterday, 2026-12-25, 25 dec 2026, dec 25, december 25, 2026.
-fn date(text: &str, today: NaiveDate) -> Option<NaiveDate> {
+pub(crate) fn date(text: &str, today: NaiveDate) -> Option<NaiveDate> {
     let text = text.trim().trim_end_matches('.');
     match text {
         "today" | "now" => return Some(today),

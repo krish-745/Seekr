@@ -11,6 +11,7 @@ mod files;
 mod focus;
 mod hotkey;
 mod indexer;
+mod notes;
 mod paste;
 mod preview;
 mod query;
@@ -329,6 +330,8 @@ pub fn run() {
             hide,
             query::query,
             query::run_action,
+            notes::read_note,
+            notes::save_note_text,
             query::toggle_pin,
             preview::preview,
             content::content_setup_needed,
