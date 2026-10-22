@@ -43,7 +43,7 @@ pub struct Config {
     pub search: String,
     /// Added or replaced web shortcuts: key to URL, with `%s` for the words typed.
     pub shortcuts: BTreeMap<String, String>,
-    /// The cloud API for general (`??`) questions: "gemini" or "grok"; empty for whichever key is
+    /// The cloud API for general (`??`) questions: "gemini" or "groq"; empty for whichever key is
     /// set. Questions about files always use the model on this PC.
     pub api: String,
     /// The local model's file name in `llm\models`, without ".gguf"; empty for the default.

@@ -10,8 +10,8 @@
 //! docs/benchmarks/llm.md), started on the first question and stopped after ten idle minutes,
 //! which hands the GPU back.
 //!
-//! `??`: Gemini or Grok, through their OpenAI-style APIs, with the key in the user's environment
-//! (GEMINI_API_KEY or XAI_API_KEY). `api` in config.toml picks one when both are set, and
+//! `??`: Gemini or Groq, through their OpenAI-style APIs, with the key in the user's environment
+//! (GEMINI_API_KEY or GROQ_API_KEY). `api` in config.toml picks one when both are set, and
 //! `api_model` the model.
 
 use std::{
@@ -77,22 +77,25 @@ struct Api {
     no_thinking: Option<(&'static str, &'static str)>,
 }
 
+/// In order of preference when config.toml doesn't name one: Groq answers fastest.
 const APIS: [Api; 2] = [
+    Api {
+        name: "groq",
+        label: "Groq",
+        url: "https://api.groq.com/openai/v1/chat/completions",
+        key: "GROQ_API_KEY",
+        model: "openai/gpt-oss-120b",
+        // gpt-oss always reasons; the least of it gets to the answer soonest.
+        no_thinking: Some(("reasoning_effort", "low")),
+    },
     Api {
         name: "gemini",
         label: "Gemini API",
         url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
         key: "GEMINI_API_KEY",
-        model: "gemini-2.5-flash",
-        no_thinking: Some(("reasoning_effort", "none")),
-    },
-    Api {
-        name: "grok",
-        label: "xAI Grok API",
-        url: "https://api.x.ai/v1/chat/completions",
-        key: "XAI_API_KEY",
-        model: "grok-4-fast-non-reasoning",
-        no_thinking: None,
+        model: "gemini-3.5-flash",
+        // Gemini 3 thinks at "low" at the least; the flash-latest alias was often overloaded.
+        no_thinking: Some(("reasoning_effort", "low")),
     },
 ];
 
@@ -181,7 +184,9 @@ impl Ai {
             .iter()
             .find(|a| a.name == self.api)
             .or_else(|| APIS.iter().find(|a| user_env(a.key).is_some()))
-            .ok_or("set GEMINI_API_KEY or XAI_API_KEY in your environment for general questions")?;
+            .ok_or(
+                "set GEMINI_API_KEY or GROQ_API_KEY in your environment for general questions",
+            )?;
         let key = user_env(api.key)
             .ok_or_else(|| format!("{} isn't set in your environment", api.key))?;
         let model = if self.api_model.is_empty() {
@@ -491,6 +496,8 @@ fn stream_reply(
                 .build(),
         )
         .timeout_connect(Some(Duration::from_secs(10)))
+        // An overloaded API can hold a request for minutes; better to say so.
+        .timeout_recv_response(Some(Duration::from_secs(60)))
         .http_status_as_error(false)
         .build()
         .into();
@@ -838,6 +845,43 @@ mod tests {
         assert!(after < idle_gpu + 300, "the GPU memory came back");
     }
 
+    /// Asks the cloud model one general question through the same code as `??`:
+    /// `cargo test -p seekr live_general_answer -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn live_general_answer() {
+        for api in APIS.iter().filter(|a| user_env(a.key).is_some()) {
+            let ai = Ai::new(&common::Config {
+                api: api.name.into(),
+                ..Default::default()
+            });
+            let (api, model, key) = ai.cloud().unwrap();
+            let mut body = json!({
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": GENERAL},
+                    {"role": "user", "content": "In one sentence, what is big-O notation?"},
+                ],
+                "stream": true, "temperature": 0.3, "max_tokens": 300,
+            });
+            if let Some((field, value)) = api.no_thinking {
+                body[field] = json!(value);
+            }
+            let id = ai.asking.fetch_add(1, Ordering::SeqCst) + 1;
+            match stream_reply(&ai, id, api.url, &key, body, api.no_thinking, &|_| {}) {
+                Ok((text, first, total)) => {
+                    println!(
+                        "{} {model}: first word {first:?}, all {total:?}: {text}",
+                        api.label
+                    );
+                    let text = text.to_lowercase();
+                    assert!(text.contains("algorithm") || text.contains("growth"));
+                }
+                Err(e) => panic!("{} {model}: {e}", api.label),
+            }
+        }
+    }
+
     #[test]
     fn question_mode() {
         assert_eq!(
@@ -853,14 +897,14 @@ mod tests {
     #[test]
     fn general_questions_need_a_key_and_name_it() {
         let ai = Ai::new(&common::Config {
-            api: "grok".into(),
+            api: "groq".into(),
             ..Default::default()
         });
-        if user_env("XAI_API_KEY").is_none() {
-            assert_eq!(
-                ai.cloud().unwrap_err(),
-                "XAI_API_KEY isn't set in your environment"
-            );
+        match ai.cloud() {
+            Ok((api, model, _)) => {
+                assert_eq!((api.name, model.as_str()), ("groq", "openai/gpt-oss-120b"))
+            }
+            Err(e) => assert_eq!(e, "GROQ_API_KEY isn't set in your environment"),
         }
     }
 }

@@ -12,7 +12,7 @@ them, and the RTX 5050's peak memory and mean power while answering.
     python bench/llm/bench.py [candidate ...]
 
 Candidates: ollama (qwen3.5:9b as installed), llama-9b-q4km (the same GGUF in llama-server),
-llama-9b-iq4xs, llama-4b-q4km, gemini and grok (need GEMINI_API_KEY or XAI_API_KEY in the
+llama-9b-iq4xs, llama-4b-q4km, gemini and groq (need GEMINI_API_KEY or GROQ_API_KEY in the
 user's environment; SEEKR_API_MODEL overrides the model).
 Results go to bench/llm/results.json.
 """
@@ -281,8 +281,9 @@ CANDIDATES = {
     "gemini": lambda: cloud("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
                             "GEMINI_API_KEY", os.environ.get("SEEKR_API_MODEL", "gemini-2.5-flash"),
                             {"reasoning_effort": "none"}),
-    "grok": lambda: cloud("https://api.x.ai/v1/chat/completions", "XAI_API_KEY",
-                          os.environ.get("SEEKR_API_MODEL", "grok-4-fast-non-reasoning"), {}),
+    "groq": lambda: cloud("https://api.groq.com/openai/v1/chat/completions", "GROQ_API_KEY",
+                          os.environ.get("SEEKR_API_MODEL", "openai/gpt-oss-120b"),
+                          {"reasoning_effort": "low"}),
 }
 
 

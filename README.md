@@ -84,13 +84,13 @@ Type `:` and a word: `:fire`, `:laugh`, `:indian rupee`, `:double arrow`, `:gree
 
 Follow up with another `?` (or `??`) question; Esc stops an answer.
 
-`??` needs a Gemini or Grok key in your own environment (never in a file you share):
+`??` needs a Gemini or Groq key in your own environment (never in a file you share); both have free tiers:
 
 ```powershell
-[Environment]::SetEnvironmentVariable('GEMINI_API_KEY', 'your-key', 'User')   # or XAI_API_KEY for Grok
+[Environment]::SetEnvironmentVariable('GROQ_API_KEY', 'your-key', 'User')   # or GEMINI_API_KEY
 ```
 
-With both set, `api = "grok"` in `%APPDATA%\Seekr\config.toml` picks Grok; `api_model` picks the model.
+With both set, `api = "groq"` in `%APPDATA%\Seekr\config.toml` picks Groq; `api_model` picks the model (defaults: `openai/gpt-oss-120b` on Groq, `gemini-3.5-flash` on Gemini).
 
 ## Develop
 
