@@ -26,12 +26,9 @@ use content::{
 use tantivy::IndexWriter;
 use windows::Win32::{
     Graphics::Dxgi::{CreateDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, IDXGIFactory1},
-    System::{
-        Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS},
-        Threading::{
-            GetCurrentProcess, IDLE_PRIORITY_CLASS, PROCESS_MODE_BACKGROUND_BEGIN,
-            PROCESS_MODE_BACKGROUND_END, SetPriorityClass,
-        },
+    System::Threading::{
+        GetCurrentProcess, IDLE_PRIORITY_CLASS, PROCESS_MODE_BACKGROUND_BEGIN,
+        PROCESS_MODE_BACKGROUND_END, SetPriorityClass,
     },
 };
 
@@ -341,7 +338,7 @@ impl Run<'_> {
             return;
         }
         let bulk = self.pending.len() >= BULK;
-        if bulk && on_battery() {
+        if bulk && common::on_battery() {
             tracing::info!(
                 "on battery: {} passages wait for mains power",
                 self.pending.len()
@@ -467,11 +464,6 @@ fn discrete_adapter() -> Option<i32> {
         }
     }
     best.map(|(i, _)| i)
-}
-
-fn on_battery() -> bool {
-    let mut status = SYSTEM_POWER_STATUS::default();
-    unsafe { GetSystemPowerStatus(&mut status) }.is_ok() && status.ACLineStatus == 0
 }
 
 /// Extraction on a thread of its own, so a file that hangs the parser can be given up on.

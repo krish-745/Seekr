@@ -102,6 +102,14 @@ fn install_panic_hook(path: PathBuf) {
     }));
 }
 
+/// True when Windows says the machine is running on its battery (false on mains or if it can't
+/// tell). Bulk embedding waits for mains power.
+pub fn on_battery() -> bool {
+    use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+    let mut status = SYSTEM_POWER_STATUS::default();
+    unsafe { GetSystemPowerStatus(&mut status) }.is_ok() && status.ACLineStatus == 0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

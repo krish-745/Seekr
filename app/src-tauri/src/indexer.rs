@@ -1,7 +1,8 @@
 //! Runs `seekr-indexer.exe` (shipped next to Seekr) in the background: a full pass at launch and
 //! whenever the content folders change, and the changed paths inside those folders as the journal
 //! or watcher reports them. Only one run at a time; changes that arrive meanwhile wait for the
-//! next one.
+//! next one. Bulk embedding waits while on battery, so mains power coming back queues a full pass,
+//! which embeds what was left.
 
 use std::{
     io::Write,
@@ -17,6 +18,7 @@ use tauri::{AppHandle, Manager};
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// Saving a file writes it several times; gather the burst into one run.
 const SETTLE: Duration = Duration::from_millis(400);
+const POWER_CHECK: Duration = Duration::from_secs(60);
 
 #[derive(Default)]
 pub struct Indexer {
@@ -80,14 +82,28 @@ pub fn start(app: &AppHandle) {
         tracing::warn!("seekr-indexer.exe isn't next to Seekr; content search stays empty");
         return;
     };
-    let app = app.clone();
     app.state::<Indexer>().refresh();
+    let supervised = app.clone();
     let spawned = std::thread::Builder::new()
         .name("indexer".into())
-        .spawn(move || supervise(&app.state::<Indexer>(), &exe));
+        .spawn(move || supervise(&supervised.state::<Indexer>(), &exe));
     if let Err(e) = spawned {
         tracing::error!("no content indexing: {e}");
+        return;
     }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let mut was_on_battery = common::on_battery();
+        loop {
+            std::thread::sleep(POWER_CHECK);
+            let on_battery = common::on_battery();
+            if was_on_battery && !on_battery {
+                tracing::info!("on mains power again; catching up on content indexing");
+                app.state::<Indexer>().refresh();
+            }
+            was_on_battery = on_battery;
+        }
+    });
 }
 
 fn supervise(indexer: &Indexer, exe: &Path) {
