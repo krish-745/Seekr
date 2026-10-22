@@ -2,7 +2,7 @@
 
 A fast keyboard launcher for Windows: apps, files, file contents and meaning, plus everyday tools, all on one hotkey.
 
-**Status:** early development (Phase 2: whole-drive file search). Alt+Space opens the search panel: installed apps (Start menu and Store) and every file and folder name on your fixed drives. Content search, tools and AI come later.
+**Status:** early development (Phase 3: content search). Alt+Space opens the search panel: installed apps (Start menu and Store), every file and folder name on your fixed drives, and the words inside files in the folders you choose (asked the first time the panel opens). Meaning search, tools and AI come later.
 
 ## Install
 

@@ -1,0 +1,19 @@
+[package]
+name = "indexer"
+description = "Seekr's background content indexer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "seekr-indexer"
+path = "src/main.rs"
+
+[dependencies]
+common = { path = "../common" }
+content = { path = "../content" }
+ignore = "0.4.33"
+tantivy = "0.27.0"
+tracing = "0.1"
+windows = { version = "0.62", features = ["Win32_System_Threading"] }

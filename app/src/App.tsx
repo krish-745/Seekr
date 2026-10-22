@@ -104,10 +104,10 @@ function App() {
   let queue: Batch[] = [];
   let frame = 0;
   const typedAt = new Map<number, number>();
-  // Batches received per query: the first holds apps and commands, the second file names.
-  const received = new Map<number, number>();
   let firstPainted = 0;
+  // The query whose file-name and file-content batches are waiting to be painted.
   let filesArrived = 0;
+  let contentArrived = 0;
 
   function record(metric: string, t0: number) {
     // The callback runs at the start of the next frame, after this one is painted.
@@ -135,8 +135,11 @@ function App() {
       filesArrived = 0;
       record("files", t0);
     }
+    if (t0 !== undefined && contentArrived === shown.id) {
+      contentArrived = 0;
+      record("content", t0);
+    }
     for (const id of typedAt.keys()) if (id < shown.id) typedAt.delete(id);
-    for (const id of received.keys()) if (id < shown.id) received.delete(id);
   }
 
   function search(text: string) {
@@ -145,9 +148,8 @@ function App() {
     typedAt.set(id, performance.now());
     const onBatch = new Channel<Batch>();
     onBatch.onmessage = (batch) => {
-      const n = (received.get(batch.id) ?? 0) + 1;
-      received.set(batch.id, n);
-      if (n === 2) filesArrived = batch.id;
+      if (batch.source === "files") filesArrived = batch.id;
+      if (batch.source === "content") contentArrived = batch.id;
       queue.push(batch);
       frame ||= requestAnimationFrame(flush);
     };

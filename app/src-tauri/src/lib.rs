@@ -7,6 +7,7 @@ mod fileops;
 mod files;
 mod focus;
 mod hotkey;
+mod indexer;
 mod preview;
 mod query;
 mod rank;
@@ -276,6 +277,8 @@ pub fn run() {
             });
         })
         .manage(Telemetry::default())
+        .manage(indexer::Indexer::default())
+        .manage(content::Search::default())
         .setup(|app| {
             let db = common::data_dir().join("seekr.db");
             let ranker = rank::Ranker::open(&db).unwrap_or_else(|e| {
@@ -284,6 +287,7 @@ pub fn run() {
             });
             app.manage(ranker);
             files::start(app.handle());
+            indexer::start(app.handle());
             register_hotkey(app.handle());
             apps::refresh(app.handle());
             build_tray(app)?;

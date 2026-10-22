@@ -1,10 +1,16 @@
 //! The content-search folder picker: suggestions (none pre-checked), the user's own additions,
 //! and a native folder chooser. The choice is saved through `common::content`.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 
+use content::store::Store;
+use fsindex::filter::Parsed;
 use serde::Serialize;
-use tauri::AppHandle;
+use tantivy::IndexReader;
+use tauri::{AppHandle, Manager, State};
 use windows::Win32::{
     Foundation::HWND,
     System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance},
@@ -13,7 +19,12 @@ use windows::Win32::{
     },
 };
 
-use crate::fileops::Com;
+use crate::{direct, fileops::Com, indexer::Indexer, query::Item};
+
+/// Content results shown per query.
+const RESULTS: usize = 20;
+/// Shorter queries match too much text to be useful.
+const MIN_QUERY_CHARS: usize = 3;
 
 /// Code folders people commonly keep under their profile; suggested when they exist.
 const CODE_FOLDERS: [&str; 7] = [
@@ -84,10 +95,12 @@ fn same(a: &Path, b: &Path) -> bool {
 }
 
 #[tauri::command]
-pub fn save_content_folders(paths: Vec<String>) -> Result<(), String> {
+pub fn save_content_folders(paths: Vec<String>, indexer: State<'_, Indexer>) -> Result<(), String> {
     let folders: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
     tracing::info!("content search folders: {}", folders.len());
-    common::content::set_chosen(&folders).map_err(|e| e.to_string())
+    common::content::set_chosen(&folders).map_err(|e| e.to_string())?;
+    indexer.refresh();
+    Ok(())
 }
 
 /// The Windows folder chooser. The panel hides while it is open and comes back afterwards.
@@ -122,6 +135,103 @@ fn pick(owner: Option<HWND>) -> Option<String> {
 }
 
 /// "Add to content search" on a folder result.
-pub fn add(path: &str) -> Result<(), String> {
-    common::content::add(Path::new(path)).map_err(|e| e.to_string())
+pub fn add(app: &AppHandle, path: &str) -> Result<(), String> {
+    common::content::add(Path::new(path)).map_err(|e| e.to_string())?;
+    app.state::<Indexer>().refresh();
+    Ok(())
+}
+
+/// The content index, opened at the first search after the indexer has created it.
+#[derive(Default)]
+pub struct Search(Mutex<Option<(Store, IndexReader)>>);
+
+/// Files whose text matches the query's words, best passage first, as path results whose
+/// subtitle is the matching line.
+pub fn search(app: &AppHandle, parsed: &Parsed) -> Vec<Item> {
+    let query = tantivy_query(&parsed.text);
+    // shortcut: file filters (ext:, in:, dm:) don't narrow content results yet; until they do,
+    // a filtered query shows file names only.
+    if query.chars().count() < MIN_QUERY_CHARS || !parsed.filter.is_empty() {
+        return Vec::new();
+    }
+    let state = app.state::<Search>();
+    let mut open = state.0.lock().unwrap();
+    if open.is_none() {
+        let dir = content::index_dir();
+        if !dir.join("meta.json").exists() {
+            return Vec::new();
+        }
+        match Store::open(&dir).and_then(|s| s.reader().map(|r| (s, r))) {
+            Ok(opened) => *open = Some(opened),
+            Err(e) => {
+                tracing::warn!("content index unavailable: {e}");
+                return Vec::new();
+            }
+        }
+    }
+    let Some((store, reader)) = open.as_ref() else {
+        return Vec::new();
+    };
+    let hits = match store.search(reader, &query, RESULTS) {
+        Ok(hits) => hits,
+        Err(e) => {
+            tracing::warn!("content search failed: {e}");
+            return Vec::new();
+        }
+    };
+    hits.into_iter()
+        .map(|hit| {
+            let name = Path::new(&hit.path)
+                .file_name()
+                .map_or_else(|| hit.path.clone(), |n| n.to_string_lossy().into_owned());
+            let snippet = hit.snippet.split_whitespace().collect::<Vec<_>>().join(" ");
+            let subtitle = format!("Line {} · {snippet}", hit.line);
+            direct::path_item(hit.path, name, subtitle, false)
+        })
+        .collect()
+}
+
+/// The name pattern in Tantivy's syntax: nucleo's `'exact\ words` becomes a quoted phrase,
+/// `!word` becomes `-word`, and the anchors `^` and `$` are dropped.
+fn tantivy_query(pattern: &str) -> String {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut chars = pattern.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if chars.peek() == Some(&' ') => {
+                word.push(' ');
+                chars.next();
+            }
+            ' ' => words.push(std::mem::take(&mut word)),
+            c => word.push(c),
+        }
+    }
+    words.push(word);
+    words
+        .into_iter()
+        .filter(|w| !w.is_empty())
+        .map(|w| {
+            if let Some(phrase) = w.strip_prefix('\'') {
+                format!("\"{}\"", phrase.replace('"', ""))
+            } else if let Some(not) = w.strip_prefix('!') {
+                format!("-{not}")
+            } else {
+                w.trim_matches(['^', '$']).to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn converts_name_patterns_to_tantivy_syntax() {
+        let parsed = fsindex::filter::parse(r#"invoice "due date" -draft"#);
+        assert_eq!(tantivy_query(&parsed.text), r#"invoice "due date" -draft"#);
+        assert_eq!(tantivy_query("^readme$"), "readme");
+    }
 }

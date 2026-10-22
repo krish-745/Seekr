@@ -25,7 +25,7 @@ use fsindex::{
 };
 use tauri::{AppHandle, Manager};
 
-use crate::{direct, query::Item, rank::Ranker};
+use crate::{direct, indexer::Indexer, query::Item, rank::Ranker};
 
 /// The only volume the service reads.
 const SERVICE_DRIVE: char = 'C';
@@ -132,7 +132,7 @@ fn run(app: &AppHandle, drive: char, use_service: bool) {
         let stopped = if use_service {
             follow(app, &files)
         } else {
-            fallback(&files, drive)
+            fallback(&files, &app.state::<Indexer>(), drive)
         };
         if let Err(e) = stopped {
             tracing::info!("{drive}: file index unavailable: {e}");
@@ -175,12 +175,15 @@ fn follow(app: &AppHandle, files: &Files) -> io::Result<()> {
                 fill_stats_later(app, SERVICE_DRIVE);
             }
             Message::Changes { next_usn, records } => {
+                let gone = deleted_paths(files, SERVICE_DRIVE, &records);
                 if let Some(index) = files.drives.write().unwrap().get_mut(&SERVICE_DRIVE) {
                     records.iter().for_each(|r| index.apply(r));
                     index.usn = next_usn;
                     dirty = true;
                 }
-                restat(files, SERVICE_DRIVE, &records);
+                let touched = restat(files, SERVICE_DRIVE, &records);
+                app.state::<Indexer>()
+                    .changed(gone.into_iter().chain(touched));
             }
             Message::Hello { .. } => {
                 return Err(io::Error::new(
@@ -197,11 +200,12 @@ fn follow(app: &AppHandle, files: &Files) -> io::Result<()> {
 }
 
 /// Reads the size and date of every entry the journal touched, since its records carry neither.
-fn restat(files: &Files, drive: char, records: &[Record]) {
+/// Returns the paths it read, for the content indexer.
+fn restat(files: &Files, drive: char, records: &[Record]) -> Vec<String> {
     let paths: Vec<(u64, String)> = {
         let drives = files.drives.read().unwrap();
         let Some(index) = drives.get(&drive) else {
-            return;
+            return Vec::new();
         };
         let live: HashSet<u64> = records
             .iter()
@@ -221,6 +225,20 @@ fn restat(files: &Files, drive: char, records: &[Record]) {
             index.set_stat(frn, size, modified);
         }
     }
+    paths.into_iter().map(|(_, path)| path).collect()
+}
+
+/// Paths of the entries these records delete, read before the records are applied.
+fn deleted_paths(files: &Files, drive: char, records: &[Record]) -> Vec<String> {
+    let drives = files.drives.read().unwrap();
+    let Some(index) = drives.get(&drive) else {
+        return Vec::new();
+    };
+    records
+        .iter()
+        .filter(|r| r.reason & USN_REASON_FILE_DELETE != 0)
+        .filter_map(|r| Some(index.path(drive, index.entry(r.frn)?)))
+        .collect()
 }
 
 /// The service's names come without sizes and dates; a low-priority walk (about 20 s for C:)
@@ -276,7 +294,7 @@ fn fill_stats(files: &Files, drive: char) {
 }
 
 /// Walks `drive`, then follows its watcher, walking again whenever the watcher drops changes.
-fn fallback(files: &Files, drive: char) -> io::Result<()> {
+fn fallback(files: &Files, indexer: &Indexer, drive: char) -> io::Result<()> {
     let root = PathBuf::from(format!(r"{drive}:\"));
     let (tx, rx) = mpsc::channel();
     let watched = root.clone();
@@ -313,6 +331,12 @@ fn fallback(files: &Files, drive: char) -> io::Result<()> {
                 break;
             }
             if !changes.is_empty() {
+                indexer.changed(changes.iter().filter_map(|c| match c {
+                    Change::Added(p) | Change::Removed(p) | Change::Modified(p) => {
+                        Some(p.display().to_string())
+                    }
+                    Change::Overflow => None,
+                }));
                 // Walking a folder that moved in happens under the read lock, so search goes on.
                 let records = files
                     .drives

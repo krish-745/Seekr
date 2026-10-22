@@ -6,7 +6,7 @@ use fsindex::filter;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State, ipc::Channel};
 
-use crate::{apps, builtin, direct, files, rank::Ranker};
+use crate::{apps, builtin, content, direct, files, rank::Ranker};
 
 #[derive(Clone, Serialize)]
 pub struct Action {
@@ -31,6 +31,8 @@ pub struct Item {
 #[derive(Serialize)]
 pub struct Batch {
     pub id: u64,
+    /// "apps" (with commands and typed paths), "files" or "content", for latency telemetry.
+    pub source: &'static str,
     pub items: Vec<Item>,
     /// The file filters typed, such as `ext: pdf`; only the first batch of a query carries them.
     pub chips: Vec<Chip>,
@@ -102,13 +104,44 @@ pub async fn query(
         })
         .collect();
     on_batch
-        .send(Batch { id, items, chips })
+        .send(Batch {
+            id,
+            source: "apps",
+            items,
+            chips,
+        })
         .map_err(|e| e.to_string())?;
     let files = files.await.map_err(|e| e.to_string())?;
     if let Some(items) = files.filter(|items| !items.is_empty() && engine.is_current(id)) {
         let chips = Vec::new();
         on_batch
-            .send(Batch { id, items, chips })
+            .send(Batch {
+                id,
+                source: "files",
+                items,
+                chips,
+            })
+            .map_err(|e| e.to_string())?;
+    }
+    // Words inside files come last: searched alongside file names they took the cores those
+    // need, and took file results past their 30 ms budget.
+    if !engine.is_current(id) {
+        return Ok(());
+    }
+    let content_app = app.clone();
+    let items =
+        tauri::async_runtime::spawn_blocking(move || content::search(&content_app, &parsed))
+            .await
+            .map_err(|e| e.to_string())?;
+    if !items.is_empty() && engine.is_current(id) {
+        let chips = Vec::new();
+        on_batch
+            .send(Batch {
+                id,
+                source: "content",
+                items,
+                chips,
+            })
             .map_err(|e| e.to_string())?;
     }
     Ok(())

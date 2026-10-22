@@ -4,8 +4,9 @@ use std::{sync::Mutex, time::Instant};
 
 use tauri::State;
 
-/// show: hotkey to panel ready; keystroke: to the first results painted; files: to file results.
-const METRICS: [&str; 3] = ["show", "keystroke", "files"];
+/// show: hotkey to panel ready; keystroke: to the first results painted; files and content: to
+/// file-name and file-content results.
+const METRICS: [&str; 4] = ["show", "keystroke", "files", "content"];
 /// Samples per metric before a summary line is logged, so everyday use stays quiet.
 const BATCH: usize = 50;
 

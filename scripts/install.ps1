@@ -13,8 +13,8 @@ $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $approved = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
 $gpu = 'HKCU:\Software\Microsoft\DirectX\UserGpuPreferences'
 
-# Every running copy, dev or installed, so the exe can be replaced or removed.
-Get-Process seekr -ErrorAction SilentlyContinue | Stop-Process -Force
+# Every running copy, dev or installed, so the exes can be replaced or removed.
+Get-Process seekr, seekr-indexer -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 500
 
 # Runs seekr-svc elevated (the UAC prompt) and fails if it does.
@@ -39,6 +39,8 @@ if (-not $NoBuild) {
     try {
         npm run tauri build -- --no-bundle
         if ($LASTEXITCODE -ne 0) { throw "release build failed (exit $LASTEXITCODE)" }
+        cargo build --release -p indexer
+        if ($LASTEXITCODE -ne 0) { throw "indexer build failed (exit $LASTEXITCODE)" }
         if (-not $SkipService) {
             cargo build --release -p service
             if ($LASTEXITCODE -ne 0) { throw "service build failed (exit $LASTEXITCODE)" }
@@ -51,6 +53,8 @@ if (-not $SkipService) { Invoke-Service (Join-Path $root 'target\release\seekr-s
 
 New-Item -ItemType Directory -Force $dest | Out-Null
 Copy-Item (Join-Path $root 'target\release\seekr.exe') $exe -Force
+# The content indexer runs from next to the app.
+Copy-Item (Join-Path $root 'target\release\seekr-indexer.exe') (Join-Path $dest 'seekr-indexer.exe') -Force
 # Native DLLs (onnxruntime, pdfium) get pinned and copied next to the exe once Seekr ships them.
 
 Set-ItemProperty $run -Name Seekr -Value "`"$exe`" --hidden"

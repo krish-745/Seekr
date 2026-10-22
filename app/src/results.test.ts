@@ -7,8 +7,8 @@ describe("applyBatches", () => {
   it("replaces on a newer query and appends within one", () => {
     const chips = [{ label: "ext: pdf", valid: true }];
     const shown = applyBatches({ id: 1, items: [item("old")], chips: [] }, [
-      { id: 2, items: [item("a")], chips },
-      { id: 2, items: [item("b")], chips: [] },
+      { id: 2, source: "apps", items: [item("a")], chips },
+      { id: 2, source: "files", items: [item("b")], chips: [] },
     ]);
     expect(shown.id).toBe(2);
     expect(shown.items.map((i) => i.id)).toEqual(["a", "b"]);
@@ -17,14 +17,14 @@ describe("applyBatches", () => {
 
   it("drops batches from older queries", () => {
     const shown = applyBatches({ id: 3, items: [item("keep")], chips: [] }, [
-      { id: 2, items: [item("stale")], chips: [{ label: "x", valid: true }] },
+      { id: 2, source: "apps", items: [item("stale")], chips: [{ label: "x", valid: true }] },
     ]);
     expect(shown.items.map((i) => i.id)).toEqual(["keep"]);
     expect(shown.chips).toEqual([]);
   });
 
   it("clears the list when a newer query has no results", () => {
-    const next = applyBatches({ id: 1, items: [item("x")], chips: [] }, [{ id: 2, items: [], chips: [] }]);
+    const next = applyBatches({ id: 1, items: [item("x")], chips: [] }, [{ id: 2, source: "apps", items: [], chips: [] }]);
     expect(next.items).toEqual([]);
   });
 });

@@ -124,7 +124,7 @@ pub fn run(app: &AppHandle, item: &str, action: &str, owner: HWND) -> Result<(),
         (Some(("path", path)), "terminal") => return fileops::terminal(path),
         (Some(("path", path)), "properties") => return fileops::properties(path),
         (Some(("path", path)), "recycle") => return fileops::recycle(path),
-        (Some(("path", path)), "addcontent") => return content::add(path),
+        (Some(("path", path)), "addcontent") => return content::add(app, path),
         (Some((_, text)), "copy") => return clipboard::set_text(owner, text),
         _ => return Err(format!("unknown action {action} on {item}")),
     };

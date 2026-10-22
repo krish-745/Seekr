@@ -2,16 +2,10 @@
 //! folder listings, and shell thumbnails for images, video and anything else the shell can draw.
 //! Cloud-only files never have their content read, so previewing doesn't download them.
 
-use std::{
-    fs,
-    io::{self, BufRead, BufReader, Read},
-    os::windows::fs::MetadataExt,
-    path::Path,
-    sync::OnceLock,
-};
+use std::{fs, io, os::windows::fs::MetadataExt, path::Path, sync::OnceLock};
 
+use content::extract::{self, Kind};
 use pulldown_cmark::{Event, Options, Parser};
-use quick_xml::{Reader, events::Event as Xml};
 use serde::Serialize;
 use syntect::{
     easy::HighlightLines, highlighting::ThemeSet, parsing::SyntaxSet, util::LinesWithEndings,
@@ -24,8 +18,6 @@ const CODE_LINES: usize = 400;
 const LINE_CHARS: usize = 1_000;
 const FOLDER_ENTRIES: usize = 200;
 const DOCUMENT_CHARS: usize = 20_000;
-/// Uncompressed bytes read from one part of an Office file, against zip bombs.
-const OFFICE_PART_BYTES: u64 = 16 * 1024 * 1024;
 /// Thumbnail size in physical pixels; the pane is about 500 px wide.
 const THUMB_PX: i32 = 512;
 const RECALL_ON_DATA_ACCESS: u32 = 0x0040_0000;
@@ -115,7 +107,7 @@ fn build(path: &str, dark: bool) -> Preview {
     }
     let truncated = meta.len() > TEXT_BYTES;
     let built = match ext.as_str() {
-        "docx" | "pptx" | "xlsx" => office(p, &ext).ok(),
+        "docx" | "pptx" | "xlsx" => document(p),
         "md" | "markdown" => text(p).map(|t| markdown(&t)),
         _ => text(p).map(|t| code(&t, &ext, dark, truncated)),
     };
@@ -138,29 +130,26 @@ fn image(path: &str) -> Preview {
     }
 }
 
-/// The start of a text file, or None for binary content. UTF-16 files (with a byte order mark,
-/// as Windows writes them) are decoded; anything else is read as UTF-8.
+/// The start of a text file, or None for binary content.
 fn text(path: &Path) -> Option<String> {
-    let mut bytes = Vec::new();
-    fs::File::open(path)
-        .ok()?
-        .take(TEXT_BYTES)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
-        let units: Vec<u16> = rest
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|&c| u16::from_le_bytes(c))
-            .collect();
-        return Some(String::from_utf16_lossy(&units));
+    extract::text(path, TEXT_BYTES).ok().flatten()
+}
+
+fn document(path: &Path) -> Option<Preview> {
+    let kind = Kind::of(path)?;
+    let mut text = extract::office(path, kind, DOCUMENT_CHARS).ok()?;
+    let truncated = text.len() > DOCUMENT_CHARS;
+    if truncated {
+        let end = (0..=DOCUMENT_CHARS)
+            .rev()
+            .find(|&i| text.is_char_boundary(i))
+            .unwrap_or(0);
+        text.truncate(end);
     }
-    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
-    if bytes.iter().take(8192).any(|&b| b == 0) {
-        return None;
-    }
-    Some(String::from_utf8_lossy(bytes).into_owned())
+    Some(Preview::Document {
+        text: text.trim().to_string(),
+        truncated,
+    })
 }
 
 fn syntaxes() -> &'static SyntaxSet {
@@ -229,86 +218,6 @@ fn folder(path: &Path) -> io::Result<Preview> {
     Ok(Preview::Folder { entries, total })
 }
 
-/// The text of a Word document, a PowerPoint deck (slide by slide) or an Excel workbook's
-/// strings, from the XML parts inside the zip.
-fn office(path: &Path, ext: &str) -> zip::result::ZipResult<Preview> {
-    let mut archive = zip::ZipArchive::new(BufReader::new(fs::File::open(path)?))?;
-    let mut parts: Vec<String> = match ext {
-        "docx" => vec!["word/document.xml".into()],
-        "xlsx" => vec!["xl/sharedStrings.xml".into()],
-        _ => archive
-            .file_names()
-            .flatten()
-            .filter(|n| n.starts_with("ppt/slides/slide") && n.ends_with(".xml"))
-            .map(|n| n.into_owned())
-            .collect(),
-    };
-    // slide10 after slide9.
-    parts.sort_by_key(|n| {
-        let digits: String = n.chars().filter(char::is_ascii_digit).collect();
-        digits.parse::<u32>().unwrap_or(0)
-    });
-    let mut text = String::new();
-    for name in parts {
-        let Ok(part) = archive.by_name(&name) else {
-            continue;
-        };
-        xml_text(BufReader::new(part.take(OFFICE_PART_BYTES)), &mut text);
-        text.push('\n');
-        if text.len() > DOCUMENT_CHARS {
-            break;
-        }
-    }
-    let truncated = text.len() > DOCUMENT_CHARS;
-    if truncated {
-        let end = (0..=DOCUMENT_CHARS)
-            .rev()
-            .find(|&i| text.is_char_boundary(i))
-            .unwrap_or(0);
-        text.truncate(end);
-    }
-    Ok(Preview::Document {
-        text: text.trim().to_string(),
-        truncated,
-    })
-}
-
-/// Appends the content of every `<t>` element (`w:t`, `a:t`, plain `t`), with a line break
-/// after each paragraph or shared string.
-fn xml_text(input: impl BufRead, out: &mut String) {
-    let mut reader = Reader::from_reader(input);
-    let mut buf = Vec::new();
-    let mut in_text = false;
-    loop {
-        match reader.read_event_into(&mut buf) {
-            Ok(Xml::Start(e)) if e.local_name().as_ref() == "t" => in_text = true,
-            Ok(Xml::End(e)) => match e.local_name().as_ref() {
-                "t" => in_text = false,
-                "p" | "si" => out.push('\n'),
-                _ => {}
-            },
-            Ok(Xml::Text(t)) if in_text => out.push_str(&t),
-            Ok(Xml::GeneralRef(r)) if in_text => match r.resolve_char_ref() {
-                Ok(Some(c)) => out.push(c),
-                _ => out.push_str(match &*r {
-                    "lt" => "<",
-                    "gt" => ">",
-                    "amp" => "&",
-                    "quot" => "\"",
-                    "apos" => "'",
-                    _ => "",
-                }),
-            },
-            Ok(Xml::Eof) | Err(_) => break,
-            _ => {}
-        }
-        if out.len() > DOCUMENT_CHARS {
-            break;
-        }
-        buf.clear();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,15 +271,7 @@ mod tests {
     }
 
     #[test]
-    fn office_xml_text_keeps_paragraphs_and_entities() {
-        let xml = r#"<w:document><w:body><w:p><w:r><w:t>Fish &amp; chips</w:t></w:r></w:p><w:p><w:r><w:t xml:space="preserve">A&#33;</w:t></w:r></w:p></w:body></w:document>"#;
-        let mut out = String::new();
-        xml_text(xml.as_bytes(), &mut out);
-        assert_eq!(out, "Fish & chips\nA!\n");
-    }
-
-    #[test]
-    fn text_reads_utf16_and_refuses_binary() {
+    fn reads_utf16_text_refuses_binary_and_lists_folders() {
         let dir = std::env::temp_dir().join(format!("seekr-preview-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let utf16: Vec<u8> = [0xFF, 0xFE]

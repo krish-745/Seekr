@@ -18,7 +18,7 @@ export type Preview =
   | { kind: "folder"; entries: { name: string; dir: boolean }[]; total: number }
   | { kind: "document"; text: string; truncated: boolean }
   | { kind: "nothing" };
-export type Batch = { id: number; items: Item[]; chips: Chip[] };
+export type Batch = { id: number; source: "apps" | "files" | "content"; items: Item[]; chips: Chip[] };
 export type Shown = { id: number; items: Item[]; chips: Chip[] };
 
 /**
