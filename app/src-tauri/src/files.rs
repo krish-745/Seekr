@@ -368,6 +368,23 @@ fn fallback(files: &Files, indexer: &Indexer, drive: char) -> io::Result<()> {
 }
 
 fn save(files: &Files, drive: char) {
+    // Churn (builds, installs) leaves deleted names that every search still scans.
+    let compacted = {
+        let mut drives = files.drives.write().unwrap();
+        drives
+            .get_mut(&drive)
+            .filter(|i| i.needs_compacting())
+            .map(|index| {
+                let (slots, started) = (index.slots(), Instant::now());
+                index.compact();
+                (slots, index.slots(), started.elapsed())
+            })
+    };
+    if let Some((before, after, took)) = compacted {
+        // Entry numbers changed, so earlier matches can't narrow a search any more.
+        files.generation.fetch_add(1, Ordering::SeqCst);
+        tracing::info!("{drive}: compacted the index from {before} to {after} slots in {took:?}");
+    }
     let guard = files.drives.read().unwrap();
     let Some(index) = guard.get(&drive) else {
         return;

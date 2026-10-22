@@ -630,6 +630,46 @@ impl Index {
         })
     }
 
+    /// Whether deleted entries take over a fifth of the slots: then every search scans the dead
+    /// ones too, and a build that creates and deletes millions of files slows it for good.
+    pub fn needs_compacting(&self) -> bool {
+        self.slots() > self.len() + self.len() / 4
+    }
+
+    /// Drops deleted entries and the bytes of old names. Entry numbers change, so anything that
+    /// kept some (a search's matches) is stale afterwards.
+    pub fn compact(&mut self) {
+        let live: Vec<usize> = (0..self.frns.len())
+            .filter(|&i| self.flags[i] & DELETED == 0)
+            .collect();
+        let mut remap = vec![NONE; self.frns.len()];
+        for (new, &old) in live.iter().enumerate() {
+            remap[old] = new as u32;
+        }
+        let mut out = Self {
+            journal_id: self.journal_id,
+            usn: self.usn,
+            ..Self::default()
+        };
+        out.by_frn.reserve(live.len());
+        for &i in &live {
+            let n = out.frns.len() as u32;
+            out.frns.push(self.frns[i]);
+            let p = self.parents[i];
+            out.parents
+                .push(if p == NONE { NONE } else { remap[p as usize] });
+            out.flags.push(self.flags[i]);
+            out.name_starts.push(out.names.len() as u32);
+            out.name_lens.push(self.name_lens[i]);
+            out.names.extend_from_slice(self.name_bytes(i as u32));
+            out.sizes.push(self.sizes[i]);
+            out.times.push(self.times[i]);
+            out.masks.push(self.masks[i]);
+            out.by_frn.insert(self.frns[i], n);
+        }
+        *self = out;
+    }
+
     /// Writes the live entries (renamed and deleted names are dropped) for a later `load`.
     pub fn save(&self, out: impl Write) -> io::Result<()> {
         // New positions for live entries, so parents can be rewritten after compaction.
@@ -888,6 +928,35 @@ mod tests {
         assert_eq!(names(&index, "rep"), ["report.pdf"]);
         assert_eq!(names(&index, "docs")[0], "Documents");
         assert!(names(&index, "zzz").is_empty());
+    }
+
+    #[test]
+    fn compacting_drops_the_dead_and_keeps_paths() {
+        let mut index = sample();
+        index.set_stat(13, 4096, 7);
+        for frn in 100..120 {
+            let mut temp = rec(frn, 12, &format!("tmp{frn}.obj"), false);
+            temp.reason = 0x100;
+            index.apply(&temp);
+            temp.reason = USN_REASON_FILE_DELETE;
+            index.apply(&temp);
+        }
+        let mut renamed = rec(13, 12, "report final.pdf", false);
+        renamed.reason = 0x2000;
+        index.apply(&renamed);
+        assert!(index.needs_compacting());
+        index.compact();
+        assert_eq!((index.len(), index.slots()), (5, 5));
+        assert!(!index.needs_compacting());
+        let report = entry(&index, 13);
+        assert_eq!(
+            index.path('C', report),
+            r"C:\Users\me\Documents\report final.pdf"
+        );
+        assert_eq!(index.size(report), Some(4096));
+        assert!(index.modified(report).is_some());
+        assert_eq!(names(&index, "rep"), ["report final.pdf"]);
+        assert!(index.is_dir(entry(&index, 12)));
     }
 
     #[test]
