@@ -513,7 +513,12 @@ fn stream_reply(
     }
     if !response.status().is_success() {
         let status = response.status();
-        let detail = response.body_mut().read_to_string().unwrap_or_default();
+        // Some APIs quote the key back in their errors; it must not reach the log.
+        let detail = response
+            .body_mut()
+            .read_to_string()
+            .unwrap_or_default()
+            .replace(key, "<key>");
         tracing::warn!(
             "AI request failed with {status}: {}",
             detail.chars().take(300).collect::<String>()
