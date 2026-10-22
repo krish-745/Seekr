@@ -13,15 +13,15 @@ use windows::{
             Com::{COINIT_MULTITHREADED, CoInitializeEx},
             Threading::{
                 OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
-                QueryFullProcessImageNameW,
+                PROCESS_TERMINATE, QueryFullProcessImageNameW, TerminateProcess,
             },
         },
         UI::WindowsAndMessaging::{
             EnumWindows, GA_ROOTOWNER, GWL_EXSTYLE, GetAncestor, GetLastActivePopup,
             GetWindowLongW, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
-            IsIconic, IsWindow, IsWindowVisible, PostMessageW, SW_RESTORE, SW_SHOWMINNOACTIVE,
-            SetForegroundWindow, ShowWindow, WM_CLOSE, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
-            WS_EX_TOOLWINDOW,
+            IsHungAppWindow, IsIconic, IsWindow, IsWindowVisible, PostMessageW, SW_RESTORE,
+            SW_SHOWMINNOACTIVE, SetForegroundWindow, ShowWindow, WM_CLOSE, WS_EX_APPWINDOW,
+            WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
         },
     },
     core::{BOOL, PWSTR},
@@ -44,6 +44,11 @@ const CLOSE: Action = Action {
     id: "winclose",
     label: "Close window",
 };
+/// The panel asks for a second Enter first.
+const END_TASK: Action = Action {
+    id: "endtask",
+    label: "End task",
+};
 
 /// `win` or `win <words>`.
 pub fn mode(text: &str) -> Option<&str> {
@@ -55,6 +60,8 @@ struct Window {
     hwnd: isize,
     title: String,
     program: String,
+    /// Windows' own "Not responding" test: no messages handled for five seconds.
+    hung: bool,
 }
 
 /// The switchable windows, other than Seekr's own, whose title or program has every word.
@@ -75,14 +82,20 @@ pub fn items(filter: &str, panel: Option<HWND>) -> Vec<Item> {
             } else {
                 name
             };
+            let mut actions = vec![SWITCH, MINIMIZE, CLOSE];
+            let mut subtitle = format!("Window · {name}");
+            if w.hung {
+                subtitle = format!("Not responding · {subtitle}");
+                actions.push(END_TASK);
+            }
             Item {
                 id: format!("win:{}", w.hwnd),
                 title: w.title.clone(),
-                subtitle: format!("Window · {name}"),
+                subtitle,
                 preview: format!("{}\n{}", w.title, w.program),
                 icon: apps::file_icon(&w.program),
                 line: None,
-                actions: vec![SWITCH, MINIMIZE, CLOSE],
+                actions,
             }
         })
         .collect()
@@ -158,14 +171,43 @@ unsafe fn switchable(hwnd: HWND) -> Option<Window> {
             hwnd: hwnd.0 as isize,
             title,
             program: program(hwnd).unwrap_or_default(),
+            hung: IsHungAppWindow(hwnd).as_bool(),
         })
     }
 }
 
-/// The full path of the program that owns the window.
-fn program(hwnd: HWND) -> Option<String> {
+fn pid(hwnd: HWND) -> u32 {
     let mut pid = 0;
     unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+    pid
+}
+
+/// Ends a program outright, as Task Manager's End task does. False for an admin one.
+fn terminate(pid: u32) -> bool {
+    let Ok(process) = (unsafe { OpenProcess(PROCESS_TERMINATE, false, pid) }) else {
+        return false;
+    };
+    let ended = unsafe { TerminateProcess(process, 1) }.is_ok();
+    let _ = unsafe { CloseHandle(process) };
+    ended
+}
+
+/// Ends every program with a window that isn't responding: (ended, refused).
+pub fn end_frozen() -> (usize, usize) {
+    let mut pids: Vec<u32> = windows()
+        .iter()
+        .filter(|w| w.hung)
+        .map(|w| pid(HWND(w.hwnd as _)))
+        .collect();
+    pids.sort_unstable();
+    pids.dedup();
+    let ended = pids.iter().filter(|&&p| terminate(p)).count();
+    (ended, pids.len() - ended)
+}
+
+/// The full path of the program that owns the window.
+fn program(hwnd: HWND) -> Option<String> {
+    let pid = pid(hwnd);
     let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()? };
     let mut path = vec![0u16; 1024];
     let mut len = path.len() as u32;
@@ -192,6 +234,12 @@ pub fn run(app: &AppHandle, id: &str, action: &str) -> Result<(), String> {
         "winminimize" => {
             // SW_MINIMIZE would activate the next window and take focus from the panel.
             let _ = unsafe { ShowWindow(hwnd, SW_SHOWMINNOACTIVE) };
+        }
+        "endtask" => {
+            if !terminate(pid(hwnd)) {
+                paste::toast("Can't end an admin app from Seekr");
+            }
+            std::thread::sleep(Duration::from_millis(150));
         }
         "winclose" => {
             // Windows drops messages to an admin window from a normal app.

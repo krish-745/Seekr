@@ -10,7 +10,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State, ipc::Channel};
 
 use crate::{
-    apps, builtin, calc, clipboard, clips, content, direct, files, rank::Ranker, switcher,
+    apps, builtin, calc, clipboard, clips, content, direct, files, rank::Ranker, switcher, system,
 };
 
 #[derive(Clone, Serialize)]
@@ -125,6 +125,7 @@ pub async fn query(
     let mut items = Vec::new();
     if parsed.filter.is_empty() {
         items.extend(calc::items(&text));
+        items.extend(system::direct(&text));
     }
     items.extend(direct::items(&text));
     // Apps and Seekr's own commands are fast, so they are ranked together into the first batch;
@@ -132,6 +133,7 @@ pub async fn query(
     if parsed.filter.is_empty() {
         let mut candidates = apps::all(&index);
         candidates.extend(builtin::all());
+        candidates.extend(system::all());
         items.extend(ranker.rank(&text, candidates));
     }
     if !engine.is_current(id) {
@@ -221,6 +223,18 @@ pub fn run_action(
         clipboard::set_text(owner, result)?;
         crate::hide_panel(&app, true);
         return Ok(());
+    }
+    // System commands and Settings pages learn from use, but "volume 40" is a one-off.
+    if let Some(command) = item.strip_prefix("sys:") {
+        if !command.contains(':') {
+            let _ = ranker.record(&query, &item);
+        }
+        return system::run(&app, command, &action);
+    }
+    if let Some(page) = item.strip_prefix("setting:") {
+        let _ = ranker.record(&query, &item);
+        tracing::info!("open settings {page}");
+        return system::open_setting(&app, page);
     }
     tracing::info!("run {item} {action}");
     if let Err(e) = ranker.record(&query, &item) {

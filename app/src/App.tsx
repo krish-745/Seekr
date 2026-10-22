@@ -16,7 +16,17 @@ import {
 import "./App.css";
 
 /** Actions that change an entry in place and leave the panel open. */
-const STAY_OPEN = new Set(["clippin", "clipunpin", "clipdelete", "winminimize", "winclose"]);
+const STAY_OPEN = new Set(["clippin", "clipunpin", "clipdelete", "winminimize", "winclose", "endtask"]);
+/** Actions that need a second Enter, and what the hint asks. */
+const CONFIRM: Record<string, (item: Item) => string> = {
+  recycle: (item) => `Move ${item.title} to the Recycle Bin`,
+  restart: () => "Restart Windows now",
+  shutdown: () => "Shut down now",
+  signout: () => "Sign out of Windows now",
+  emptybin: () => "Delete everything in the Recycle Bin for good",
+  killfrozen: () => "End every app that isn't responding",
+  endtask: (item) => `End ${item.title}`,
+};
 /** Commands that open a list by typing its prefix. */
 const PREFIXES: Record<string, string> = { cliphistory: "clip ", switchwindows: "win " };
 
@@ -35,7 +45,7 @@ function App() {
   const [actionsOpen, setActionsOpen] = createSignal(false);
   const [actionIndex, setActionIndex] = createSignal(0);
   // An item waiting for a second Enter before it goes to the Recycle Bin.
-  const [confirming, setConfirming] = createSignal<Item | undefined>();
+  const [confirming, setConfirming] = createSignal<{ item: Item; action: string } | undefined>();
 
   const current = () => items()[selected()];
   // The content-search folder picker, shown on first run and from its command.
@@ -183,9 +193,10 @@ function App() {
       search(input.value);
       return;
     }
-    if (actionId === "recycle" && confirming() !== item) {
+    const asked = confirming();
+    if (actionId in CONFIRM && (asked?.item !== item || asked.action !== actionId)) {
       setActionsOpen(false);
-      setConfirming(item);
+      setConfirming({ item, action: actionId });
       return;
     }
     setConfirming(undefined);
@@ -218,7 +229,7 @@ function App() {
     const pending = confirming();
     if (pending) {
       // Enter confirms; any other key backs out.
-      if (e.key === "Enter") run(pending, "recycle");
+      if (e.key === "Enter") run(pending.item, pending.action);
       else setConfirming(undefined);
       if (e.key === "Enter" || e.key === "Escape") e.preventDefault();
       return;
@@ -458,9 +469,9 @@ function App() {
               </>
             }
           >
-            {(item) => (
+            {(asked) => (
               <span class="confirm">
-                <kbd>↵</kbd> Move {item().title} to the Recycle Bin · any other key cancels
+                <kbd>↵</kbd> {CONFIRM[asked().action](asked().item)} · any other key cancels
               </span>
             )}
           </Show>
