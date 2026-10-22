@@ -81,8 +81,11 @@ Type `:` and a word: `:fire`, `:laugh`, `:indian rupee`, `:double arrow`, `:gree
 
 - `?` and a question asks about **your files**: `?when is the rent due`. The answer cites the passages it used; click a number to open that file. A model on your GPU answers, so nothing leaves your PC; it stops after ten idle minutes.
 - `??` and a question asks **anything**: `??explain big-O notation`. A cloud model answers, and only what you type after `??` is sent, never your files.
+- On a text, Markdown, code, Word, PowerPoint or Excel file, Tab → **Summarize with AI** summarizes it with the model on your GPU; `?` follow-ups then ask about that file. A long file is cut to its first 16,000 characters, and the model is told so.
 
 Follow up with another `?` (or `??`) question; Esc stops an answer.
+
+The model for `?` isn't part of the install. The first time, the `?` row says so: press Enter to download it (llama.cpp's server, its CUDA runtime and Qwen3.5-4B: 3.3 GB, each file checked against its SHA-256). It needs an NVIDIA GPU and takes 3.5 GB in `%LOCALAPPDATA%\Seekr\llm`. Esc stops the download; a stopped file starts over next time.
 
 `??` needs a Gemini or Groq key in your own environment (never in a file you share); both have free tiers:
 

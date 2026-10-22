@@ -44,4 +44,19 @@ as accurate as the 9B models on this task, and leaving 4 GB of VRAM free. Qwen3.
 step up for harder questions (0.14 s over the warm target). Ollama stays usable for people who
 already run it, but isn't the default.
 
-The Gemini API comparison is pending an API key.
+Cloud APIs answer only general `??` questions, which never carry file context, so they aren't
+compared on this task.
+
+## Phase 5 gate (Seekr's own code)
+
+`cargo test -p seekr phase5_gate -- --ignored --nocapture` runs the default model through the
+same functions `?` uses, with about 3,000 tokens of passages per question (the first 12,000
+characters of a file), on the RTX 5050 Laptop GPU (8 GB), on top of 6560794:
+
+| Measure | Result | Target |
+|---|---|---|
+| Cold first word (server start included) | 3.8 s | ≤ 6 s |
+| Warm first word, new passages | 0.54 s, 0.76 s | ≤ 1.5 s |
+| Speed | 79 tokens/s | ≥ 40 tokens/s |
+| GPU memory while loaded | 4.0 GB, all on the GPU | fits in VRAM |
+| GPU state after the model stops | P8 after 4.3 s | low power |

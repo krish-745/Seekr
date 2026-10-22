@@ -57,6 +57,8 @@ type AiEvent =
 type Answer = {
   /** A general (`??`) conversation with a cloud model, rather than one about the user's files. */
   general: boolean;
+  /** The one file it is about, from "Summarize with AI". */
+  file?: string;
   turns: { question: string; text: string }[];
   sources: Source[];
   busy: boolean;
@@ -64,6 +66,25 @@ type Answer = {
   error?: string;
   took?: string;
 };
+
+/** What the local AI needs downloaded, and how far the download has got. */
+type AiSetup = {
+  parts: { label: string; bytes: number; done: boolean }[];
+  download: number;
+  needed: number;
+  installed: number;
+  free: number;
+  folder: string;
+};
+type SetupEvent =
+  | { kind: "progress"; part: number; done: number }
+  | { kind: "status"; text: string }
+  | { kind: "done" }
+  | { kind: "error"; text: string };
+type AiSetupView = { info: AiSetup; running: boolean; got: number[]; status?: string; error?: string };
+
+const gb = (bytes: number) => `${(bytes / 1e9).toFixed(bytes < 1e9 ? 2 : 1)} GB`;
+const fileName = (path: string) => path.slice(path.lastIndexOf("\\") + 1);
 
 /** Row height in CSS px; must match `.row` in App.css. */
 const ROW = 44;
@@ -89,6 +110,9 @@ function App() {
   // The content-search folder picker, shown on first run and from its command.
   const [setup, setSetup] = createSignal<Setup>();
   const [setupIndex, setSetupIndex] = createSignal(0);
+  // The local AI's download screen.
+  const [aiSetup, setAiSetup] = createSignal<AiSetupView>();
+  const covered = () => !!setup() || !!aiSetup();
   let firstRun = false;
   let askedSetup = false;
 
@@ -127,6 +151,44 @@ function App() {
     }
     input.focus();
   }
+  async function openAiSetup() {
+    setActionsOpen(false);
+    const info = await invoke<AiSetup>("ai_setup");
+    setAiSetup({ info, running: false, got: info.parts.map(() => 0) });
+  }
+
+  function installAi() {
+    const view = aiSetup();
+    if (!view || view.running) return;
+    if (view.info.free < view.info.needed) {
+      setAiSetup({ ...view, error: `Free up ${gb(view.info.needed - view.info.free)} on this drive first.` });
+      return;
+    }
+    setAiSetup({ ...view, running: true, error: undefined });
+    const onEvent = new Channel<SetupEvent>();
+    onEvent.onmessage = (e) => {
+      const v = aiSetup();
+      if (!v) return;
+      if (e.kind === "progress") {
+        const got = v.got.slice();
+        got[e.part] = e.done;
+        setAiSetup({ ...v, got, status: undefined });
+      } else if (e.kind === "status") setAiSetup({ ...v, status: e.text });
+      else if (e.kind === "done") closeAiSetup();
+      else if (e.text === "cancelled") return;
+      else setAiSetup({ ...v, running: false, status: undefined, error: e.text });
+    };
+    invoke("install_ai", { onEvent });
+  }
+
+  /** Esc stops a download in progress; what finished stays installed. */
+  function closeAiSetup() {
+    if (aiSetup()?.running) invoke("cancel_ai_setup");
+    setAiSetup(undefined);
+    input.focus();
+    search(input.value);
+  }
+
   const [preview, setPreview] = createSignal<Preview | undefined>();
   const previewOf = <K extends Preview["kind"]>(kind: K) => {
     const p = preview();
@@ -234,6 +296,18 @@ function App() {
       ask(text.slice(general ? 2 : 1).trim(), general);
       return;
     }
+    if (actionId === "aisetup") {
+      openAiSetup();
+      return;
+    }
+    if (actionId === "summarize") {
+      const path = item.id.slice(5);
+      setActionsOpen(false);
+      input.value = "?";
+      search(input.value);
+      ask(`Summarize ${fileName(path)}`, false, path);
+      return;
+    }
     if (actionId === "askmode") {
       input.value = "?";
       search(input.value);
@@ -276,13 +350,14 @@ function App() {
     }
   }
 
-  function ask(question: string, general: boolean) {
+  function ask(question: string, general: boolean, file?: string) {
     const before = answer();
     if (!question || before?.busy) return;
-    // Switching between ? and ?? starts a new conversation.
-    const followUp = !!before && before.turns.length > 0 && !before.error && before.general === general;
+    // Switching between ? and ?? starts a new conversation, as does a file's summary.
+    const followUp = !file && !!before && before.turns.length > 0 && !before.error && before.general === general;
     setAnswer({
       general,
+      file: file ?? (followUp ? before.file : undefined),
       turns: [...(followUp ? before.turns : []), { question, text: "" }],
       sources: followUp ? before.sources : [],
       busy: true,
@@ -302,7 +377,7 @@ function App() {
         setAnswer({ ...a, busy: false, status: undefined, took: `${e.first.toFixed(1)} s to start, ${e.seconds.toFixed(1)} s in all` });
       else setAnswer({ ...a, busy: false, status: undefined, error: e.text });
     };
-    invoke("ask", { question, general, followUp, onEvent });
+    invoke("ask", { question, general, followUp, file: file ?? null, onEvent });
   }
 
   function openSource(n: number) {
@@ -324,6 +399,14 @@ function App() {
     if (e.key === "Escape" && answer()?.busy) {
       invoke("stop_answer");
       setAnswer({ ...answer()!, busy: false, status: undefined, took: "Stopped" });
+      e.preventDefault();
+      return;
+    }
+    const download = aiSetup();
+    if (download) {
+      if (e.key === "Enter") installAi();
+      else if (e.key === "Escape") closeAiSetup();
+      else return;
       e.preventDefault();
       return;
     }
@@ -437,16 +520,51 @@ function App() {
           </section>
         )}
       </Show>
+      <Show when={aiSetup()}>
+        {(v) => (
+          <section class="setup">
+            <h2>Local AI</h2>
+            <p class="subtitle">
+              Questions about your files are answered by a model on this PC, so your files never leave it. It needs
+              these, downloaded once from GitHub and Hugging Face and checked before use:
+            </p>
+            <ul class="folders downloads">
+              <For each={v().info.parts}>
+                {(part, i) => (
+                  <li>
+                    <span>{part.label}</span>
+                    <span class="size">
+                      {part.done
+                        ? "Installed"
+                        : v().got[i()] > 0
+                          ? `${gb(v().got[i()])} of ${gb(part.bytes)}`
+                          : gb(part.bytes)}
+                    </span>
+                    <progress max={part.bytes} value={part.done ? part.bytes : v().got[i()]} />
+                  </li>
+                )}
+              </For>
+            </ul>
+            <p class="subtitle">
+              Downloads {gb(v().info.download)} and needs {gb(v().info.needed)} free while installing ({gb(v().info.free)}{" "}
+              free now). Once installed it takes {gb(v().info.installed)} in {v().info.folder}. The model uses about 4 GB
+              of graphics memory while answering and is unloaded after 10 idle minutes.
+            </p>
+            <Show when={v().status}>{(status) => <p class="subtitle">{status()}</p>}</Show>
+            <Show when={v().error}>{(error) => <p class="error">{error()}</p>}</Show>
+          </section>
+        )}
+      </Show>
       <input
         ref={input}
-        classList={{ hidden: !!setup() }}
+        classList={{ hidden: covered() }}
         class="query"
         placeholder="Search apps, files and more"
         spellcheck={false}
         autofocus
         onInput={(e) => search(e.currentTarget.value)}
       />
-      <Show when={!setup() && chips().length > 0}>
+      <Show when={!covered() && chips().length > 0}>
         <div class="chips">
           <For each={chips()}>
             {(chip) => (
@@ -457,7 +575,7 @@ function App() {
           </For>
         </div>
       </Show>
-      <div class="body" classList={{ hidden: !!setup() }}>
+      <div class="body" classList={{ hidden: covered() }}>
         <div class="results" ref={list} onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}>
           <div class="rows" style={{ height: `${items().length * ROW}px` }}>
             <For each={rows()}>
@@ -500,6 +618,9 @@ function App() {
           <Show when={!editing() && answer()}>
             {(a) => (
               <div class="answer">
+                <Show when={a().file}>
+                  {(file) => <p class="subtitle">About {fileName(file())} · follow-ups with ? ask about it too</p>}
+                </Show>
                 <For each={a().turns}>
                   {(turn) => (
                     <>
@@ -622,15 +743,25 @@ function App() {
         </Show>
       </div>
       <footer class="hints">
-        <Show
-          when={!setup()}
-          fallback={
+        <Show when={aiSetup()}>
+          {(v) => (
             <>
+              <Show when={!v().running}>
+                <span><kbd>↵</kbd> {v().error ? "Try again" : "Download"}</span>
+              </Show>
+              <span><kbd>Esc</kbd> {v().running ? "Stop download" : "Cancel"}</span>
+            </>
+          )}
+        </Show>
+        <Show
+          when={!covered()}
+          fallback={
+            <Show when={setup()}>
               <span><kbd>Space</kbd> Tick</span>
               <span><kbd>Ctrl+O</kbd> Add folder</span>
               <span><kbd>↵</kbd> Save</span>
               <span><kbd>Esc</kbd> {firstRun ? "Not now" : "Cancel"}</span>
-            </>
+            </Show>
           }
         >
           <Show

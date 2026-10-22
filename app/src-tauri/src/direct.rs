@@ -47,6 +47,11 @@ const PROPERTIES: Action = Action {
     id: "properties",
     label: "Properties",
 };
+/// The panel runs this one: it asks the model on this PC about the file.
+const SUMMARIZE: Action = Action {
+    id: "summarize",
+    label: "Summarize with AI",
+};
 const ADD_CONTENT: Action = Action {
     id: "addcontent",
     label: "Add to content search",
@@ -100,9 +105,13 @@ pub fn path_item(path: String, title: String, subtitle: String, is_dir: bool) ->
             RECYCLE,
         ]
     } else {
-        vec![
+        let mut actions = vec![
             OPEN, REVEAL, OPEN_WITH, COPY_FILE, COPY_PATH, TERMINAL, PROPERTIES, RECYCLE,
-        ]
+        ];
+        if ::content::extract::Kind::of(Path::new(&path)).is_some() {
+            actions.insert(2, SUMMARIZE);
+        }
+        actions
     };
     Item {
         id: format!("path:{path}"),

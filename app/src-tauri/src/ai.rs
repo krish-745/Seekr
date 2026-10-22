@@ -10,6 +10,9 @@
 //! docs/benchmarks/llm.md), started on the first question and stopped after ten idle minutes,
 //! which hands the GPU back.
 //!
+//! "Summarize with AI" on a file gives the model that file instead (its first 16,000
+//! characters), and follow-ups ask about it.
+//!
 //! `??`: Gemini or Groq, through their OpenAI-style APIs, with the key in the user's environment
 //! (GEMINI_API_KEY or GROQ_API_KEY). `api` in config.toml picks one when both are set, and
 //! `api_model` the model.
@@ -18,7 +21,7 @@ use std::{
     io::{BufRead, BufReader},
     net::TcpListener,
     os::windows::process::CommandExt,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
         Mutex,
@@ -56,10 +59,12 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// the 8,192-token context.
 const FIRST_BUDGET: usize = 12_000;
 const FOLLOW_UP_BUDGET: usize = 6_000;
+/// About 4,000 tokens of one file, leaving room for a few follow-ups.
+const FILE_BUDGET: usize = 16_000;
 const CONTEXT_TOKENS: &str = "8192";
 const MAX_ANSWER_TOKENS: u32 = 600;
 const IDLE: Duration = Duration::from_secs(10 * 60);
-const RUNTIME: &str = r"llm\llama.cpp-b11819\llama-server.exe";
+pub(crate) const RUNTIME: &str = r"llm\llama.cpp-b11819\llama-server.exe";
 const MODELS: &str = r"llm\models";
 const DEFAULT_MODEL: &str = "Qwen3.5-4B-Q4_K_M";
 
@@ -103,12 +108,19 @@ const SYSTEM: &str = "You answer questions about the user's own files. Use only 
     passages. Be brief and direct. Cite the passages you used after the sentence they support, \
     like [2]. If the passages don't answer the question, say you couldn't find it in their files.";
 
+const FILE: &str = "You answer questions about one of the user's files, given below. Be brief \
+    and direct, and use only what the file says. If it doesn't say, tell them.";
+
 const GENERAL: &str = "You are a helpful assistant inside a Windows launcher. Answer directly \
     and briefly; use a short list or code block only when it helps.";
 
 const ASK: Action = Action {
     id: "ask",
     label: "Ask",
+};
+const SET_UP: Action = Action {
+    id: "aisetup",
+    label: "Set up AI",
 };
 
 struct Server {
@@ -132,6 +144,8 @@ impl Drop for Server {
 
 #[derive(Default)]
 struct Chat {
+    /// About one file (its text is the one passage), rather than whatever search finds.
+    file: bool,
     passages: Vec<Passage>,
     /// (role, content) after the system prompt.
     messages: Vec<(String, String)>,
@@ -212,6 +226,7 @@ pub fn items(app: &AppHandle, general: bool, question: &str) -> Vec<Item> {
     let Some(ai) = app.try_state::<Ai>() else {
         return Vec::new();
     };
+    let mut actions = vec![ASK];
     let (title, subtitle, preview) = if general {
         let subtitle = match ai.cloud() {
             Ok((api, model, _)) => format!("{} · {model} · only your question is sent", api.label),
@@ -229,7 +244,8 @@ pub fn items(app: &AppHandle, general: bool, question: &str) -> Vec<Item> {
         let subtitle = if model_path(&ai.model).exists() && runtime().exists() {
             format!("Your files · on this PC · {}", ai.model.replace('-', " "))
         } else {
-            "The AI model isn't installed yet".to_string()
+            actions = vec![SET_UP];
+            "The AI model isn't on this PC yet: Enter sets it up (a 3.3 GB download)".to_string()
         };
         let title = if question.is_empty() {
             "Ask AI about your files".to_string()
@@ -248,7 +264,7 @@ pub fn items(app: &AppHandle, general: bool, question: &str) -> Vec<Item> {
         preview: preview.into(),
         icon: None,
         line: None,
-        actions: vec![ASK],
+        actions,
     }]
 }
 
@@ -286,6 +302,7 @@ pub async fn ask(
     question: String,
     general: bool,
     follow_up: bool,
+    file: Option<String>,
     on_event: Channel<AiEvent>,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -294,7 +311,7 @@ pub async fn ask(
         let answered = if general {
             answer_general(&ai, id, &question, follow_up, &on_event)
         } else {
-            answer(&app, &ai, id, &question, follow_up, &on_event)
+            answer(&app, &ai, id, &question, follow_up, file, &on_event)
         };
         if let Err(e) = answered {
             tracing::warn!("AI answer failed: {e}");
@@ -319,67 +336,29 @@ fn answer(
     id: u64,
     question: &str,
     follow_up: bool,
+    file: Option<String>,
     events: &Channel<AiEvent>,
 ) -> Result<(), String> {
     let send = |e: AiEvent| {
         let _ = events.send(e);
     };
     *ai.used.lock().unwrap() = Instant::now();
-    {
+    let system = {
         let mut chat = ai.chat.lock().unwrap();
-        if !follow_up || chat.messages.is_empty() {
+        if file.is_some() || !follow_up || chat.messages.is_empty() {
             *chat = Chat::default();
         }
-        // A follow-up is read with the question before it, which it often leans on.
-        let previous = chat
-            .messages
-            .iter()
-            .rev()
-            .find(|m| m.0 == "user")
-            .map(|m| m.1.rsplit("Question: ").next().unwrap_or("").to_string())
-            .unwrap_or_default();
-        let budget = if chat.messages.is_empty() {
-            FIRST_BUDGET
+        if let Some(path) = file {
+            let (passage, user) = file_turn(&path, question)?;
+            chat.file = true;
+            chat.passages.push(passage);
+            chat.messages.push(("user".into(), user));
+        } else if chat.file {
+            chat.messages
+                .push(("user".into(), format!("Question: {question}")));
         } else {
-            FOLLOW_UP_BUDGET
-        };
-        let found = content::retrieve(
-            app,
-            &format!("{previous} {question}"),
-            budget,
-            &chat.passages,
-        );
-        let first = chat.passages.len();
-        chat.passages.extend(found);
-        let fresh = &chat.passages[first..];
-        let numbered: Vec<String> = fresh
-            .iter()
-            .enumerate()
-            .map(|(i, p)| {
-                format!(
-                    "[{}] (from {}, line {})\n{}",
-                    first + i + 1,
-                    name(&p.path),
-                    p.line,
-                    p.text
-                )
-            })
-            .collect();
-        let user = match (numbered.is_empty(), first) {
-            (true, 0) => {
-                format!("There are no passages from the user's files.\n\nQuestion: {question}")
-            }
-            (true, _) => format!("Question: {question}"),
-            (false, 0) => format!(
-                "Passages:\n\n{}\n\nQuestion: {question}",
-                numbered.join("\n\n")
-            ),
-            (false, _) => format!(
-                "More passages:\n\n{}\n\nQuestion: {question}",
-                numbered.join("\n\n")
-            ),
-        };
-        chat.messages.push(("user".into(), user));
+            search_turn(app, &mut chat, question);
+        }
         send(AiEvent::Sources {
             sources: chat
                 .passages
@@ -393,8 +372,9 @@ fn answer(
                 })
                 .collect(),
         });
-    }
-    let messages: Vec<Value> = std::iter::once(json!({"role": "system", "content": SYSTEM}))
+        if chat.file { FILE } else { SYSTEM }
+    };
+    let messages: Vec<Value> = std::iter::once(json!({"role": "system", "content": system}))
         .chain(
             ai.chat
                 .lock()
@@ -427,6 +407,103 @@ fn answer(
         first: first.as_secs_f64(),
     });
     Ok(())
+}
+
+/// The passages search finds for a question (new ones only, after those already given), and
+/// the question with them.
+fn search_turn(app: &AppHandle, chat: &mut Chat, question: &str) {
+    // A follow-up is read with the question before it, which it often leans on.
+    let previous = chat
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.0 == "user")
+        .map(|m| m.1.rsplit("Question: ").next().unwrap_or("").to_string())
+        .unwrap_or_default();
+    let budget = if chat.messages.is_empty() {
+        FIRST_BUDGET
+    } else {
+        FOLLOW_UP_BUDGET
+    };
+    let found = content::retrieve(
+        app,
+        &format!("{previous} {question}"),
+        budget,
+        &chat.passages,
+    );
+    let first = chat.passages.len();
+    chat.passages.extend(found);
+    let fresh = &chat.passages[first..];
+    let numbered: Vec<String> = fresh
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            format!(
+                "[{}] (from {}, line {})\n{}",
+                first + i + 1,
+                name(&p.path),
+                p.line,
+                p.text
+            )
+        })
+        .collect();
+    let user = match (numbered.is_empty(), first) {
+        (true, 0) => {
+            format!("There are no passages from the user's files.\n\nQuestion: {question}")
+        }
+        (true, _) => format!("Question: {question}"),
+        (false, 0) => format!(
+            "Passages:\n\n{}\n\nQuestion: {question}",
+            numbered.join("\n\n")
+        ),
+        (false, _) => format!(
+            "More passages:\n\n{}\n\nQuestion: {question}",
+            numbered.join("\n\n")
+        ),
+    };
+    chat.messages.push(("user".into(), user));
+}
+
+/// One file's text as the passage, and the first question about it.
+fn file_turn(path: &str, question: &str) -> Result<(Passage, String), String> {
+    let kind = ::content::extract::Kind::of(Path::new(path))
+        .ok_or("Seekr can't read this kind of file")?;
+    let text = ::content::extract::extract(Path::new(path), kind)
+        .map_err(|e| format!("couldn't read the file: {e}"))?
+        .unwrap_or_default();
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("the file has no text to read".into());
+    }
+    let (text, rest) = if text.len() <= FILE_BUDGET {
+        (text, "")
+    } else {
+        let mut end = FILE_BUDGET;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        // Stop at a line break when there is one in the last half.
+        let end = text[..end]
+            .rfind('\n')
+            .filter(|&n| n > end / 2)
+            .unwrap_or(end);
+        (
+            &text[..end],
+            "\n\n(That is the first part of the file; the rest didn't fit.)",
+        )
+    };
+    let user = format!(
+        "The file {}:\n\n{text}{rest}\n\nQuestion: {question}",
+        name(path)
+    );
+    Ok((
+        Passage {
+            path: path.to_string(),
+            line: 1,
+            text: text.to_string(),
+        },
+        user,
+    ))
 }
 
 /// A general question for the cloud model: just the question and the conversation so far.
@@ -578,7 +655,9 @@ fn local_server(ai: &Ai, model: &str, send: &impl Fn(AiEvent)) -> Result<(u16, S
     }
     let (runtime, model_file) = (runtime(), model_path(model));
     if !runtime.exists() || !model_file.exists() {
-        return Err("the AI model isn't installed yet".into());
+        return Err(
+            "the AI model isn't on this PC yet: type ? and press Enter to set it up".into(),
+        );
     }
     send(AiEvent::Status {
         text: "Starting the AI model…".into(),
@@ -845,6 +924,146 @@ mod tests {
         assert!(after < idle_gpu + 300, "the GPU memory came back");
     }
 
+    fn gpu_state() -> String {
+        let out = Command::new("nvidia-smi")
+            .args(["--query-gpu=pstate", "--format=csv,noheader"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// The Phase 5 targets: about 3,000 tokens of context, cold first word (start included)
+    /// within 6 s, warm within 1.5 s, at least 40 tokens/s, and the GPU back in P8 after the
+    /// model stops: `cargo test -p seekr phase5_gate -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn phase5_gate() {
+        let ai = Ai::new(&common::Config::default());
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), r"\..\..\");
+        let context = |file: &str| {
+            let text = std::fs::read_to_string(format!("{root}{file}")).unwrap();
+            let mut end = FIRST_BUDGET.min(text.len());
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("Passages:\n\n[1] (from {file}, line 1)\n{}", &text[..end])
+        };
+        let tokens = std::sync::atomic::AtomicUsize::new(0);
+        let count = |e: AiEvent| {
+            if matches!(e, AiEvent::Token { .. }) {
+                tokens.fetch_add(1, Ordering::SeqCst);
+            }
+        };
+        let ask = |passages: String, question: &str| {
+            let (port, key) = local_server(&ai, DEFAULT_MODEL, &|_| {}).unwrap();
+            let body = json!({
+                "messages": [
+                    {"role": "system", "content": SYSTEM},
+                    {"role": "user", "content": format!("{passages}\n\nQuestion: {question}")},
+                ],
+                "chat_template_kwargs": {"enable_thinking": false},
+                "cache_prompt": true, "stream": true, "temperature": 0.2,
+                "max_tokens": MAX_ANSWER_TOKENS,
+            });
+            tokens.store(0, Ordering::SeqCst);
+            let id = ai.asking.fetch_add(1, Ordering::SeqCst) + 1;
+            let url = format!("http://127.0.0.1:{port}/v1/chat/completions");
+            let (text, first, total) =
+                stream_reply(&ai, id, &url, &key, body, None, &count).unwrap();
+            let rate = tokens.load(Ordering::SeqCst) as f64 / (total - first).as_secs_f64();
+            (text, first, rate)
+        };
+        let idle = gpu_state();
+        println!("GPU {idle} before");
+
+        let started = Instant::now();
+        local_server(&ai, DEFAULT_MODEL, &|_| {}).unwrap();
+        let loaded = started.elapsed();
+        let (text, first, rate) = ask(
+            context("CHANGELOG.md"),
+            "Summarize what the clipboard history does, in detail.",
+        );
+        let cold = loaded + first;
+        println!(
+            "cold: first word {cold:?} (start included), {rate:.0} tokens/s, GPU {} MB: {text}",
+            gpu_memory_mb()
+        );
+        let (text, warm, rate) = ask(
+            context(r"docs\benchmarks\llm.md"),
+            "Which runtime and model were chosen, and why? Explain in detail.",
+        );
+        println!("warm: first word {warm:?}, {rate:.0} tokens/s: {text}");
+        let (_, warm2, rate2) = ask(
+            context("README.md"),
+            "List everything Seekr can do, in detail.",
+        );
+        println!("warm again: first word {warm2:?}, {rate2:.0} tokens/s");
+
+        // What the reaper does after ten idle minutes.
+        *ai.server.lock().unwrap() = None;
+        let stopped = Instant::now();
+        let mut state = gpu_state();
+        while state != "P8" && stopped.elapsed() < Duration::from_secs(120) {
+            std::thread::sleep(Duration::from_secs(1));
+            state = gpu_state();
+        }
+        println!(
+            "GPU {state} {:?} after the model stopped, {} MB used",
+            stopped.elapsed(),
+            gpu_memory_mb()
+        );
+        assert!(cold < Duration::from_secs(6), "cold {cold:?}");
+        assert!(
+            warm.max(warm2) < Duration::from_millis(1500),
+            "warm {warm:?} {warm2:?}"
+        );
+        assert!(rate.min(rate2) >= 40.0, "{rate:.0} {rate2:.0} tokens/s");
+        assert_eq!(state, "P8");
+    }
+
+    /// Summarizes README.md with the local model, the way "Summarize with AI" does:
+    /// `cargo test -p seekr live_file_summary -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn live_file_summary() {
+        let ai = Ai::new(&common::Config::default());
+        let readme = concat!(env!("CARGO_MANIFEST_DIR"), r"\..\..\README.md");
+        let (passage, user) = file_turn(readme, "Summarize README.md").unwrap();
+        println!("{} characters of the file", passage.text.len());
+        let (port, key) = local_server(&ai, DEFAULT_MODEL, &|_| {}).unwrap();
+        let url = format!("http://127.0.0.1:{port}/v1/chat/completions");
+        let body = |messages: Value| {
+            json!({
+                "messages": messages,
+                "chat_template_kwargs": {"enable_thinking": false},
+                "cache_prompt": true, "stream": true, "temperature": 0.2,
+                "max_tokens": MAX_ANSWER_TOKENS,
+            })
+        };
+        let mut messages = json!([
+            {"role": "system", "content": FILE},
+            {"role": "user", "content": user},
+        ]);
+        let id = ai.asking.fetch_add(1, Ordering::SeqCst) + 1;
+        let (summary, first, total) =
+            stream_reply(&ai, id, &url, &key, body(messages.clone()), None, &|_| {}).unwrap();
+        println!("summary in {first:?} to the first word, {total:?} in all:\n{summary}");
+        assert!(
+            summary.contains("Seekr") && summary.contains("launcher"),
+            "{summary}"
+        );
+
+        messages.as_array_mut().unwrap().extend([
+            json!({"role": "assistant", "content": summary}),
+            json!({"role": "user", "content": "Question: Which key opens the panel?"}),
+        ]);
+        let id = ai.asking.fetch_add(1, Ordering::SeqCst) + 1;
+        let (reply, first, _) =
+            stream_reply(&ai, id, &url, &key, body(messages), None, &|_| {}).unwrap();
+        println!("follow-up in {first:?} to the first word: {reply}");
+        assert!(reply.contains("Alt+Space"), "{reply}");
+    }
+
     /// Asks the cloud model one general question through the same code as `??`:
     /// `cargo test -p seekr live_general_answer -- --ignored --nocapture`
     #[test]
@@ -880,6 +1099,36 @@ mod tests {
                 Err(e) => panic!("{} {model}: {e}", api.label),
             }
         }
+    }
+
+    #[test]
+    fn a_file_is_given_whole_or_cut_at_a_line() {
+        let dir = std::env::temp_dir().join(format!("seekr-file-turn-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let short = dir.join("plan.md");
+        std::fs::write(&short, "\n# Plan\nShip on Friday.\n").unwrap();
+        let (passage, user) = file_turn(short.to_str().unwrap(), "When do we ship?").unwrap();
+        assert_eq!(passage.text, "# Plan\nShip on Friday.");
+        assert!(user.starts_with("The file plan.md:\n\n# Plan"));
+        assert!(user.ends_with("Question: When do we ship?"));
+        assert!(!user.contains("first part"));
+
+        let long = dir.join("long.txt");
+        let line = "é".repeat(99) + "\n";
+        std::fs::write(&long, line.repeat(200)).unwrap();
+        let (passage, user) = file_turn(long.to_str().unwrap(), "Summarize").unwrap();
+        assert!(passage.text.len() <= FILE_BUDGET && passage.text.len() > FILE_BUDGET / 2);
+        assert!(passage.text.ends_with('é'), "cut at a line break");
+        assert!(user.contains("(That is the first part of the file"));
+
+        let empty = dir.join("empty.txt");
+        std::fs::write(&empty, "  \n").unwrap();
+        assert_eq!(
+            file_turn(empty.to_str().unwrap(), "?").unwrap_err(),
+            "the file has no text to read"
+        );
+        assert!(file_turn(r"C:\Windows\notepad.exe", "?").is_err());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

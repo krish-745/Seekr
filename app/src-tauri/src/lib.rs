@@ -1,4 +1,5 @@
 mod ai;
+mod aisetup;
 mod apps;
 mod builtin;
 mod calc;
@@ -339,6 +340,9 @@ pub fn run() {
             notes::save_note_text,
             query::toggle_pin,
             preview::preview,
+            aisetup::ai_setup,
+            aisetup::install_ai,
+            aisetup::cancel_ai_setup,
             content::content_setup_needed,
             content::content_setup,
             content::save_content_folders,
