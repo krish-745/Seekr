@@ -48,6 +48,10 @@ Type a calculation and its result comes first; Enter copies it.
 
 Type `clip ` (with the space) to list what you copied, newest first, or `clip invoice` to find entries containing "invoice". Enter pastes into the window you were in, Ctrl+Enter copies; Tab lists Paste as plain text, Pin and Delete. Into an admin window, Seekr can only copy: press Ctrl+V yourself.
 
+## Window switcher
+
+Type `win ` to list open windows in Alt+Tab order, or `win code` for those whose title or program contains "code". Enter switches; Ctrl+Enter minimizes; Tab adds Close window.
+
 ## Develop
 
 Requirements: Windows 11, Rust (stable, MSVC), Visual Studio Build Tools with the C++ workload, Node.js 20+.

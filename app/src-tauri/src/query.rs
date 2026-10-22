@@ -9,7 +9,9 @@ use fsindex::filter;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State, ipc::Channel};
 
-use crate::{apps, builtin, calc, clipboard, clips, content, direct, files, rank::Ranker};
+use crate::{
+    apps, builtin, calc, clipboard, clips, content, direct, files, rank::Ranker, switcher,
+};
 
 #[derive(Clone, Serialize)]
 pub struct Action {
@@ -78,9 +80,23 @@ pub async fn query(
     ranker: State<'_, Ranker>,
 ) -> Result<(), String> {
     engine.begin(id);
-    // `clip …` lists clipboard history and nothing else.
-    if let Some(words) = clips::mode(&text) {
-        let items = clips::items(&app, words);
+    // `clip …` lists clipboard history and `win …` open windows, and nothing else.
+    let windows = switcher::mode(&text).map(str::to_string);
+    if clips::mode(&text).is_some() || windows.is_some() {
+        let items = match windows {
+            Some(words) => {
+                let panel = crate::panel_hwnd(&app).map(|h| h.0 as isize);
+                tauri::async_runtime::spawn_blocking(move || {
+                    switcher::items(
+                        &words,
+                        panel.map(|h| windows::Win32::Foundation::HWND(h as _)),
+                    )
+                })
+                .await
+                .map_err(|e| e.to_string())?
+            }
+            None => clips::items(&app, clips::mode(&text).unwrap_or("")),
+        };
         if engine.is_current(id) {
             let chips = Vec::new();
             on_batch
@@ -190,10 +206,14 @@ pub fn run_action(
     ranker: State<'_, Ranker>,
 ) -> Result<(), String> {
     let owner = crate::panel_hwnd(&app).ok_or("panel window is gone")?;
-    // Clipboard entries pin, delete and paste themselves, and aren't recent results either.
+    // Clipboard entries and windows act on themselves, and aren't recent results either.
     if let Some(clip) = item.strip_prefix("clip:") {
         tracing::info!("run {item} {action}");
         return clips::run(&app, clip, &action);
+    }
+    if let Some(window) = item.strip_prefix("win:") {
+        tracing::info!("run window {action}");
+        return switcher::run(&app, window, &action);
     }
     // A result is the user's own numbers: neither logged nor kept as a recent result.
     if let Some(result) = item.strip_prefix("calc:") {

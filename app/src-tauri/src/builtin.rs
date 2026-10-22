@@ -28,6 +28,11 @@ const HISTORY: Action = Action {
     id: "cliphistory",
     label: "Show",
 };
+/// The panel types `win ` for this one; Rust never sees it.
+const WINDOWS: Action = Action {
+    id: "switchwindows",
+    label: "Show",
+};
 /// The panel opens its folder picker for this one; Rust never sees it.
 const SETUP: Action = Action {
     id: "setup",
@@ -79,6 +84,15 @@ pub fn all() -> Vec<Item> {
             actions: vec![SETUP],
         },
         indexing(),
+        Item {
+            id: "seekr:windows".into(),
+            title: "Switch windows".into(),
+            subtitle: "Type win and part of a title or program".into(),
+            preview: "Lists the windows Alt+Tab would show, most recently used first. Enter switches to one; Tab offers Minimize and Close window.".into(),
+            icon: None,
+            line: None,
+            actions: vec![WINDOWS],
+        },
         Item {
             id: "seekr:clipboard".into(),
             title: "Clipboard history".into(),

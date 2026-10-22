@@ -15,6 +15,7 @@ mod preview;
 mod query;
 mod rank;
 mod rates;
+mod switcher;
 mod telemetry;
 
 use tauri::{

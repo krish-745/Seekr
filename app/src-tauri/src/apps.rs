@@ -222,6 +222,24 @@ fn cached_icon(item: &IShellItem, id: &str, icon_dir: &Path) -> Option<String> {
     Some(format!("http://icon.localhost/{file}"))
 }
 
+/// The icon of the file at `path` (a program, for the window switcher), rendered once into the
+/// icon cache. Call with COM initialised on this thread.
+pub fn file_icon(path: &str) -> Option<String> {
+    let file = format!(
+        "{:016x}.png",
+        fnv1a(&format!("file:{}", path.to_lowercase()))
+    );
+    let cached = icon_dir().join(&file);
+    if !cached.exists() {
+        let item: IShellItem =
+            unsafe { SHCreateItemFromParsingName(&HSTRING::from(path), None).ok()? };
+        let png = render(&item, ICON_PX, SIIGBF_ICONONLY)?;
+        fs::create_dir_all(icon_dir()).ok()?;
+        fs::write(&cached, png).ok()?;
+    }
+    Some(format!("http://icon.localhost/{file}"))
+}
+
 /// The shell's thumbnail of the file at `path` as a PNG at most `px` square, or None when it has
 /// no thumbnail handler. Call with COM initialised on this thread.
 pub fn thumbnail_png(path: &str, px: i32) -> Option<Vec<u8>> {

@@ -16,7 +16,9 @@ import {
 import "./App.css";
 
 /** Actions that change an entry in place and leave the panel open. */
-const STAY_OPEN = new Set(["clippin", "clipunpin", "clipdelete"]);
+const STAY_OPEN = new Set(["clippin", "clipunpin", "clipdelete", "winminimize", "winclose"]);
+/** Commands that open a list by typing its prefix. */
+const PREFIXES: Record<string, string> = { cliphistory: "clip ", switchwindows: "win " };
 
 /** Row height in CSS px; must match `.row` in App.css. */
 const ROW = 44;
@@ -176,8 +178,8 @@ function App() {
       openSetup(false);
       return;
     }
-    if (actionId === "cliphistory") {
-      input.value = "clip ";
+    if (actionId in PREFIXES) {
+      input.value = PREFIXES[actionId];
       search(input.value);
       return;
     }
