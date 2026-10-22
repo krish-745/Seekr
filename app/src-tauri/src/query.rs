@@ -10,8 +10,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State, ipc::Channel};
 
 use crate::{
-    apps, builtin, calc, clipboard, clips, content, direct, files, rank::Ranker, switcher, system,
-    web::Web,
+    apps, builtin, calc, clipboard, clips, content, direct, emoji, files, rank::Ranker, switcher,
+    system, web::Web,
 };
 
 #[derive(Clone, Serialize)]
@@ -82,9 +82,10 @@ pub async fn query(
     ranker: State<'_, Ranker>,
 ) -> Result<(), String> {
     engine.begin(id);
-    // `clip …` lists clipboard history and `win …` open windows, and nothing else.
+    // `clip …` lists clipboard history, `win …` open windows and `:…` emoji, and nothing else.
     let windows = switcher::mode(&text).map(str::to_string);
-    if clips::mode(&text).is_some() || windows.is_some() {
+    let glyphs = emoji::mode(&text);
+    if clips::mode(&text).is_some() || windows.is_some() || glyphs.is_some() {
         let items = match windows {
             Some(words) => {
                 let panel = crate::panel_hwnd(&app).map(|h| h.0 as isize);
@@ -97,7 +98,10 @@ pub async fn query(
                 .await
                 .map_err(|e| e.to_string())?
             }
-            None => clips::items(&app, clips::mode(&text).unwrap_or("")),
+            None => match glyphs {
+                Some(words) => emoji::items(words),
+                None => clips::items(&app, clips::mode(&text).unwrap_or("")),
+            },
         };
         if engine.is_current(id) {
             let chips = Vec::new();
@@ -245,6 +249,10 @@ pub fn run_action(
     if let Some(clip) = item.strip_prefix("clip:") {
         tracing::info!("run {item} {action}");
         return clips::run(&app, clip, &action);
+    }
+    if let Some(glyph) = item.strip_prefix("emoji:") {
+        tracing::info!("run emoji {action}");
+        return emoji::run(&app, glyph, &action);
     }
     if let Some(window) = item.strip_prefix("win:") {
         tracing::info!("run window {action}");

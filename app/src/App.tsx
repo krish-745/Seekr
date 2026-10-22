@@ -28,7 +28,7 @@ const CONFIRM: Record<string, (item: Item) => string> = {
   endtask: (item) => `End ${item.title}`,
 };
 /** Commands that open a list by typing its prefix. */
-const PREFIXES: Record<string, string> = { cliphistory: "clip ", switchwindows: "win " };
+const PREFIXES: Record<string, string> = { cliphistory: "clip ", switchwindows: "win ", emojimode: "emoji " };
 
 /** Row height in CSS px; must match `.row` in App.css. */
 const ROW = 44;

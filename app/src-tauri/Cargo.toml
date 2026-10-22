@@ -38,3 +38,4 @@ fend-core = "1.5.9"
 chrono-tz = "0.10.4"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 ureq = { version = "3.5.0", default-features = false, features = ["native-tls-no-default"] }
+emojis = "0.9.1"

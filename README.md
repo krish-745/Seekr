@@ -69,6 +69,10 @@ jira = "https://example.atlassian.net/browse/%s"
 
 Bookmarks and history from Brave, Chrome and Edge show up as you type; the last row searches the web.
 
+## Emoji and symbols
+
+Type `:` and a word: `:fire`, `:laugh`, `:indian rupee`, `:double arrow`, `:greek small pi`, `:half`. Enter pastes, Ctrl+Enter copies, and Tab lists skin tones where an emoji has them.
+
 ## Develop
 
 Requirements: Windows 11, Rust (stable, MSVC), Visual Studio Build Tools with the C++ workload, Node.js 20+.

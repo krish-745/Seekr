@@ -28,6 +28,11 @@ const HISTORY: Action = Action {
     id: "cliphistory",
     label: "Show",
 };
+/// The panel types `emoji ` for this one; Rust never sees it.
+const EMOJI: Action = Action {
+    id: "emojimode",
+    label: "Show",
+};
 /// The panel types `win ` for this one; Rust never sees it.
 const WINDOWS: Action = Action {
     id: "switchwindows",
@@ -91,6 +96,15 @@ pub fn all() -> Vec<Item> {
             actions: vec![SETUP],
         },
         indexing(),
+        Item {
+            id: "seekr:emoji".into(),
+            title: "Search emoji & symbols".into(),
+            subtitle: "Type : and a word, like :fire or :rupee".into(),
+            preview: "Emoji (Unicode 16) by name, keyword and shortcode, and symbols: currencies, arrows, math, Greek letters, fractions and more. Enter pastes into the window you were in, Ctrl+Enter copies; emoji with skin tones list them under Tab.".into(),
+            icon: None,
+            line: None,
+            actions: vec![EMOJI],
+        },
         Item {
             id: "seekr:windows".into(),
             title: "Switch windows".into(),

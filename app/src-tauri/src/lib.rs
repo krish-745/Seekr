@@ -5,6 +5,7 @@ mod clipboard;
 mod clips;
 mod content;
 mod direct;
+mod emoji;
 mod fileops;
 mod files;
 mod focus;
