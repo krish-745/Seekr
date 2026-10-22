@@ -37,6 +37,9 @@ impl Status {
     }
 }
 
+/// The note on a file being read a second time after a run stopped while reading it.
+pub const RETRIED: &str = "read again after a run stopped";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Seen {
     pub size: u64,
@@ -205,18 +208,20 @@ impl State {
             .collect()
     }
 
-    /// Marks every file a previous run died on as quarantined, and returns them.
+    /// Quarantines the files a run died on twice, and returns them. A run also dies when it is
+    /// killed (Seekr quitting, Windows shutting down), so a file left mid-read once is read
+    /// again first: it stays `Working`, and the indexer marks the retry with [`RETRIED`].
     pub fn quarantine_unfinished(&self) -> rusqlite::Result<Vec<String>> {
         let mut stmt = self
             .0
-            .prepare("SELECT path FROM files WHERE status = 'working'")?;
+            .prepare("SELECT path FROM files WHERE status = 'working' AND note = ?1")?;
         let paths: Vec<String> = stmt
-            .query_map([], |r| r.get(0))?
+            .query_map([RETRIED], |r| r.get(0))?
             .collect::<Result<_, _>>()?;
         self.0.execute(
-            "UPDATE files SET status = 'quarantined', note = 'a run stopped while reading it'
-             WHERE status = 'working'",
-            [],
+            "UPDATE files SET status = 'quarantined', note = 'a run stopped while reading it twice'
+             WHERE status = 'working' AND note = ?1",
+            [RETRIED],
         )?;
         Ok(paths)
     }
@@ -263,6 +268,13 @@ mod tests {
         state.set("a", seen(Status::Indexed), None).unwrap();
         state.set("b", seen(Status::Working), None).unwrap();
         assert_eq!(state.get("a").unwrap(), Some(seen(Status::Indexed)));
+        // Left mid-read once: read again, not quarantined.
+        assert!(state.quarantine_unfinished().unwrap().is_empty());
+        assert_eq!(state.get("b").unwrap().unwrap().status, Status::Working);
+        // Left mid-read on its retry too: quarantined.
+        state
+            .set("b", seen(Status::Working), Some(RETRIED))
+            .unwrap();
         assert_eq!(state.quarantine_unfinished().unwrap(), ["b"]);
         assert_eq!(state.get("b").unwrap().unwrap().status, Status::Quarantined);
         assert!(!state.embedded("a").unwrap());

@@ -153,6 +153,15 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         Ok(()) => ExitCode::SUCCESS,
         Err(Hung(path)) => {
             tracing::warn!("{} took over {EXTRACT_TIMEOUT:?}; exiting", path.display());
+            // A hang is certain, unlike a run that was killed, so no second try.
+            if let Ok(Some(seen)) = state.get(&path.display().to_string()) {
+                let quarantined = Seen {
+                    status: Status::Quarantined,
+                    ..seen
+                };
+                let note = format!("reading it took over {EXTRACT_TIMEOUT:?}");
+                let _ = state.set(&path.display().to_string(), quarantined, Some(&note));
+            }
             ExitCode::from(HUNG)
         }
     })
@@ -294,15 +303,22 @@ impl Run<'_> {
         let needs_vectors = |state: &State, before: &Seen| {
             self.embed && before.status == Status::Indexed && !state.embedded(&key).unwrap_or(true)
         };
-        if let Ok(Some(before)) = self.state.get(&key)
+        let before = self.state.get(&key).ok().flatten();
+        if let Some(before) = before
             && before.size == now.size
             && before.modified == now.modified
+            && before.status != Status::Working
             && !needs_vectors(self.state, &before)
         {
             // Unchanged, including files quarantined in this version.
             return Ok(());
         }
-        if let Err(e) = self.state.set(&key, now, None) {
+        // Still `Working` from a run that stopped: this is its one retry.
+        let retry = before.is_some_and(|b| b.status == Status::Working);
+        if let Err(e) = self
+            .state
+            .set(&key, now, retry.then_some(content::state::RETRIED))
+        {
             tracing::warn!("state for {key}: {e}");
             return Ok(());
         }
