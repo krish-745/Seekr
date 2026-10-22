@@ -42,6 +42,13 @@ const SETUP: Action = Action {
 const CONFIG_TEMPLATE: &str = "\
 # Seekr settings. Every key is optional; changes apply after restarting Seekr.
 # hotkey = \"Alt+Space\"
+#
+# The web shortcut for \"Search the web\": g, ddg, b, or one of yours.
+# search = \"ddg\"
+#
+# Web shortcuts: type the key, a space and your words. %s is where the words go.
+# [shortcuts]
+# jira = \"https://example.atlassian.net/browse/%s\"
 ";
 
 fn config_path() -> PathBuf {
@@ -60,7 +67,7 @@ pub fn all() -> Vec<Item> {
             id: "seekr:config".into(),
             title: "Open Seekr config".into(),
             subtitle: config.clone(),
-            preview: format!("Edit {config} to change the hotkey.\n\n{CONFIG_TEMPLATE}"),
+            preview: format!("Edit {config} to change the hotkey, the web search and web shortcuts.\n\n{CONFIG_TEMPLATE}"),
             icon: None,
             line: None,
             actions: vec![OPEN, REVEAL],

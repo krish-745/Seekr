@@ -3,6 +3,7 @@
 pub mod content;
 
 use std::{
+    collections::BTreeMap,
     error::Error,
     fs,
     io::{self, Write},
@@ -38,12 +39,18 @@ fn env_dir(var: &str) -> PathBuf {
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub hotkey: String,
+    /// The web shortcut the "Search the web" row uses.
+    pub search: String,
+    /// Added or replaced web shortcuts: key to URL, with `%s` for the words typed.
+    pub shortcuts: BTreeMap<String, String>,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             hotkey: "Alt+Space".into(),
+            search: "g".into(),
+            shortcuts: BTreeMap::new(),
         }
     }
 }

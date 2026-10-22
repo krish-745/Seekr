@@ -11,6 +11,7 @@ use tauri::{AppHandle, Manager, State, ipc::Channel};
 
 use crate::{
     apps, builtin, calc, clipboard, clips, content, direct, files, rank::Ranker, switcher, system,
+    web::Web,
 };
 
 #[derive(Clone, Serialize)]
@@ -39,7 +40,8 @@ pub struct Item {
 #[derive(Serialize)]
 pub struct Batch {
     pub id: u64,
-    /// "apps" (with commands and typed paths), "files" or "content", for latency telemetry.
+    /// "apps" (with commands and typed paths), "files", "content" or "web" (history and a web
+    /// search), for latency telemetry.
     pub source: &'static str,
     pub items: Vec<Item>,
     /// The file filters typed, such as `ext: pdf`; only the first batch of a query carries them.
@@ -126,6 +128,9 @@ pub async fn query(
     if parsed.filter.is_empty() {
         items.extend(calc::items(&text));
         items.extend(system::direct(&text));
+        if let Some(web) = app.try_state::<Web>() {
+            items.extend(web.shortcut_items(&text));
+        }
     }
     items.extend(direct::items(&text));
     // Apps and Seekr's own commands are fast, so they are ranked together into the first batch;
@@ -134,6 +139,9 @@ pub async fn query(
         let mut candidates = apps::all(&index);
         candidates.extend(builtin::all());
         candidates.extend(system::all());
+        if let Some(web) = app.try_state::<Web>() {
+            candidates.extend(web.bookmarks());
+        }
         items.extend(ranker.rank(&text, candidates));
     }
     if !engine.is_current(id) {
@@ -196,7 +204,32 @@ pub async fn query(
             })
             .map_err(|e| e.to_string())?;
     }
+    // Browser history, then the words on the web, close the list.
+    let Some(web) = app.try_state::<Web>() else {
+        return Ok(());
+    };
+    if !text_filter_free(&text) || !engine.is_current(id) {
+        return Ok(());
+    }
+    let mut items = web.history(&text);
+    items.extend(web.fallback(&text));
+    if !items.is_empty() {
+        let chips = Vec::new();
+        on_batch
+            .send(Batch {
+                id,
+                source: "web",
+                items,
+                chips,
+            })
+            .map_err(|e| e.to_string())?;
+    }
     Ok(())
+}
+
+/// File filters mean the user wants files, not the web.
+fn text_filter_free(text: &str) -> bool {
+    filter::parse(text).filter.is_empty()
 }
 
 #[tauri::command]

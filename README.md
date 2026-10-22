@@ -56,6 +56,19 @@ Type `win ` to list open windows in Alt+Tab order, or `win code` for those whose
 
 Type what you want: `lock`, `sleep`, `restart`, `shut down`, `sign out`, `mute`, `volume up`, `volume 40`, `brightness 70`, `wifi`, `bluetooth`, `dark`, `empty recycle bin`, `close frozen apps`, or any Settings page (`display settings`, `startup apps`). Restart, Shut down, Sign out, Empty Recycle Bin and Close frozen apps ask for a second Enter.
 
+## Web
+
+`g tauri plugins` searches Google, `yt lofi` YouTube, `gh seekr` GitHub (also `ddg`, `b`, `wiki`, `maps`, `amz`, `so`, `r`, `npm`, `crates`, `mdn`, `imdb`, `tr`). Add your own in `%APPDATA%\Seekr\config.toml`:
+
+```toml
+search = "ddg"   # the engine for "Search the web"
+
+[shortcuts]
+jira = "https://example.atlassian.net/browse/%s"
+```
+
+Bookmarks and history from Brave, Chrome and Edge show up as you type; the last row searches the web.
+
 ## Develop
 
 Requirements: Windows 11, Rust (stable, MSVC), Visual Studio Build Tools with the C++ workload, Node.js 20+.

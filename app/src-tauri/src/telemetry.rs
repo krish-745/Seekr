@@ -57,13 +57,15 @@ fn percentile(sorted: &[f64], p: f64) -> f64 {
     sorted[rank.clamp(1, sorted.len()) - 1]
 }
 
-/// The panel is on screen and focused; also warms the meaning-search model for typing.
+/// The panel is on screen and focused; also warms the meaning-search model for typing and
+/// rereads browser bookmarks and history if they are stale.
 #[tauri::command]
 pub fn panel_ready(app: AppHandle, telemetry: State<'_, Telemetry>) {
     if let Some(at) = telemetry.shown_at.lock().unwrap().take() {
         telemetry.record("show", at.elapsed().as_secs_f64() * 1000.0);
     }
     crate::content::warm(&app);
+    crate::web::refresh(&app);
 }
 
 /// Keystroke-to-painted time measured in the webview.

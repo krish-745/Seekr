@@ -18,6 +18,7 @@ mod rates;
 mod switcher;
 mod system;
 mod telemetry;
+mod web;
 
 use tauri::{
     AppHandle, Manager, PhysicalPosition, PhysicalSize, WindowEvent,
@@ -294,6 +295,11 @@ pub fn run() {
             app.manage(ranker);
             files::start(app.handle());
             clips::start(app.handle());
+            let config = common::Config::load().unwrap_or_else(|e| {
+                tracing::error!("config.toml unreadable ({e}); using defaults");
+                common::Config::default()
+            });
+            app.manage(web::Web::new(&config.shortcuts, &config.search));
             indexer::start(app.handle());
             content::start_reaper(app.handle());
             register_hotkey(app.handle());
