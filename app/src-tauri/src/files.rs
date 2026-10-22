@@ -78,13 +78,19 @@ pub struct Files {
 }
 
 impl Files {
+    /// Each drive's number of names, for diagnostics.
+    pub fn counts(&self) -> Vec<(char, usize)> {
+        let drives = self.drives.read().unwrap();
+        drives.iter().map(|(d, index)| (*d, index.len())).collect()
+    }
+
     fn set(&self, drive: char, index: Index) {
         self.drives.write().unwrap().insert(drive, index);
         self.generation.fetch_add(1, Ordering::SeqCst);
     }
 }
 
-fn cache_path(drive: char) -> PathBuf {
+pub(crate) fn cache_path(drive: char) -> PathBuf {
     common::data_dir().join(format!("files-{drive}.idx"))
 }
 

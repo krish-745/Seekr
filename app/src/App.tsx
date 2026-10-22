@@ -67,7 +67,27 @@ type Field = {
   hint: string;
 };
 type SettingsView = { fields: Field[]; problem: string | null; path: string; css: number | null };
-type SettingsState = { view: SettingsView; index: number; draft?: string; error?: string };
+type SettingsState = {
+  view: SettingsView;
+  index: number;
+  draft?: string;
+  error?: string;
+  /** What the last maintenance action said, or the question before a rebuild. */
+  notice?: string;
+  /** A rebuild waiting for a second Enter. */
+  confirm?: string;
+};
+/** Maintenance actions that ask for a second Enter. */
+const REBUILDS = new Set(["rebuild_content", "rebuild_files"]);
+type Latency = { metric: string; n: number; p50: number; p95: number; max: number; buckets: number[] };
+type Diagnostics = {
+  sections: { title: string; rows: { label: string; value: string }[] }[];
+  latency: Latency[];
+  quarantined: [string, string][];
+  log: string[];
+  logs: string;
+};
+const BUCKET_LABELS = ["≤5", "≤10", "≤16", "≤30", "≤50", "≤100", ">100"];
 
 type Source = { n: number; path: string; line: number; name: string };
 type AiEvent =
@@ -142,9 +162,11 @@ function App() {
   // The local AI's download screen.
   const [aiSetup, setAiSetup] = createSignal<AiSetupView>();
   const [settingsState, setSettingsState] = createSignal<SettingsState>();
+  const [diagnostics, setDiagnostics] = createSignal<Diagnostics>();
+  let diagnosticsPane!: HTMLElement;
   // The prefixes in config.toml, refreshed whenever the panel is shown.
   const [prefixes, setPrefixes] = createSignal<Record<string, string>>({});
-  const covered = () => !!setup() || !!aiSetup() || !!settingsState();
+  const covered = () => !!setup() || !!aiSetup() || !!settingsState() || !!diagnostics();
   const prefix = (key: string) => `${prefixes()[key] ?? DEFAULT_PREFIXES[key]} `;
   let firstRun = false;
   let askedSetup = false;
@@ -263,6 +285,20 @@ function App() {
     } else if (field.key === "folders") {
       setSettingsState(undefined);
       openSetup(false);
+    } else if (field.key === "diagnostics") {
+      setSettingsState(undefined);
+      invoke<Diagnostics>("diagnostics").then(setDiagnostics);
+    } else if (REBUILDS.has(field.key) && s.confirm !== field.key)
+      setSettingsState({ ...s, confirm: field.key, notice: `${field.hint}. Press Enter again to go ahead.` });
+    else if (["export", "import", ...REBUILDS].includes(field.key)) {
+      setSettingsState({ ...s, confirm: undefined, notice: "Working…" });
+      invoke<string>("maintenance", { key: field.key })
+        .then(async (notice) => {
+          const view = await invoke<SettingsView>("settings");
+          takePrefixes(view);
+          setSettingsState((now) => now && { ...now, view, notice: notice || undefined });
+        })
+        .catch((e) => setSettingsState((now) => now && { ...now, notice: undefined, error: String(e) }));
     } else if (field.key === "config") invoke("run_action", { item: "seekr:config", action: "open", query: "" });
     else if (field.key === "theme.css") invoke("run_action", { item: "seekr:themecss", action: "open", query: "" });
     else setSettingsState({ ...s, draft: String(field.value), error: undefined });
@@ -540,10 +576,23 @@ function App() {
         if (e.key === "Escape") setSettingsState({ ...s, draft: undefined, error: undefined });
         else if (e.key === "Enter" && (field?.kind !== "lines" || e.ctrlKey)) commitDraft();
         else return;
-      } else if (e.key === "ArrowDown") setSettingsState({ ...s, index: Math.min(s.index + 1, last), error: undefined });
-      else if (e.key === "ArrowUp") setSettingsState({ ...s, index: Math.max(s.index - 1, 0), error: undefined });
+      } else if (e.key === "ArrowDown")
+        setSettingsState({ ...s, index: Math.min(s.index + 1, last), error: undefined, notice: undefined, confirm: undefined });
+      else if (e.key === "ArrowUp")
+        setSettingsState({ ...s, index: Math.max(s.index - 1, 0), error: undefined, notice: undefined, confirm: undefined });
       else if (e.key === "Enter" || (e.key === " " && field?.kind === "toggle")) activateSetting();
       else if (e.key === "Escape") closeSettings();
+      else return;
+      e.preventDefault();
+      return;
+    }
+    if (diagnostics()) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp")
+        diagnosticsPane.scrollBy({ top: e.key === "ArrowDown" ? 60 : -60 });
+      else if (e.key === "Escape") {
+        setDiagnostics(undefined);
+        openSettings();
+      } else if (e.key === "Enter") invoke("run_action", { item: "seekr:logs", action: "open", query: "" });
       else return;
       e.preventDefault();
       return;
@@ -735,6 +784,74 @@ function App() {
                 )}
               </For>
             </ul>
+          </section>
+        )}
+      </Show>
+      <Show when={diagnostics()}>
+        {(d) => (
+          <section class="setup diagnostics" ref={diagnosticsPane}>
+            <h2>Diagnostics</h2>
+            <For each={d().sections}>
+              {(section) => (
+                <>
+                  <h3>{section.title}</h3>
+                  <table>
+                    <For each={section.rows}>
+                      {(r) => (
+                        <tr>
+                          <td>{r.label}</td>
+                          <td>{r.value}</td>
+                        </tr>
+                      )}
+                    </For>
+                  </table>
+                </>
+              )}
+            </For>
+            <h3>Latency since Seekr started (ms)</h3>
+            <Show when={d().latency.length > 0} fallback={<p class="subtitle">No samples yet.</p>}>
+              <table class="latency">
+                <tr>
+                  <th />
+                  <th>n</th>
+                  <th>p50</th>
+                  <th>p95</th>
+                  <th>max</th>
+                  <th>
+                    <For each={BUCKET_LABELS}>{(label) => <span class="bucket">{label}</span>}</For>
+                  </th>
+                </tr>
+                <For each={d().latency}>
+                  {(l) => (
+                    <tr>
+                      <td>{l.metric}</td>
+                      <td>{l.n}</td>
+                      <td>{l.p50.toFixed(1)}</td>
+                      <td>{l.p95.toFixed(1)}</td>
+                      <td>{l.max.toFixed(1)}</td>
+                      <td>
+                        <For each={l.buckets}>
+                          {(count) => (
+                            <span class="bucket" title={`${count}`}>
+                              <span class="bar" style={{ height: `${Math.round((count / l.n) * 100)}%` }} />
+                            </span>
+                          )}
+                        </For>
+                      </td>
+                    </tr>
+                  )}
+                </For>
+              </table>
+            </Show>
+            <h3>Quarantined files</h3>
+            <Show when={d().quarantined.length > 0} fallback={<p class="subtitle">None.</p>}>
+              <ul class="listing">
+                <For each={d().quarantined}>{([path, why]) => <li title={why}>{path}</li>}</For>
+              </ul>
+            </Show>
+            <h3>Log</h3>
+            <p class="subtitle">{d().logs}</p>
+            <pre class="log">{d().log.join("\n")}</pre>
           </section>
         )}
       </Show>
@@ -967,8 +1084,9 @@ function App() {
               when={s().draft !== undefined}
               fallback={
                 <>
-                  <span><kbd>↵</kbd> Change</span>
+                  <span><kbd>↵</kbd> {s().confirm ? "Confirm" : "Change"}</span>
                   <span><kbd>Esc</kbd> Close</span>
+                  <Show when={s().notice}>{(notice) => <span class="confirm">{notice()}</span>}</Show>
                   <Show when={s().error}>{(error) => <span class="error">{error()}</span>}</Show>
                 </>
               }
@@ -978,6 +1096,11 @@ function App() {
               <Show when={s().error}>{(error) => <span class="error">{error()}</span>}</Show>
             </Show>
           )}
+        </Show>
+        <Show when={diagnostics()}>
+          <span><kbd>↑↓</kbd> Scroll</span>
+          <span><kbd>↵</kbd> Open the logs folder</span>
+          <span><kbd>Esc</kbd> Back to settings</span>
         </Show>
         <Show when={aiSetup()}>
           {(v) => (

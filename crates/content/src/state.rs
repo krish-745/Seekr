@@ -169,6 +169,42 @@ impl State {
         stmt.query_map([], |r| r.get(0))?.collect()
     }
 
+    /// Forgets every file and vector, for a rebuild.
+    pub fn clear(&self) -> rusqlite::Result<()> {
+        self.0
+            .execute_batch("DELETE FROM files; DELETE FROM vectors;")
+    }
+
+    /// How many files have each status, and how many have meaning vectors.
+    pub fn counts(&self) -> rusqlite::Result<(Vec<(Status, u64)>, u64)> {
+        let mut stmt = self
+            .0
+            .prepare("SELECT status, COUNT(*) FROM files GROUP BY status ORDER BY status")?;
+        let by_status = stmt
+            .query_map([], |r| {
+                Ok((
+                    Status::parse(&r.get::<_, String>(0)?),
+                    r.get::<_, i64>(1)? as u64,
+                ))
+            })?
+            .collect::<Result<_, _>>()?;
+        let embedded: i64 =
+            self.0
+                .query_row("SELECT COUNT(*) FROM files WHERE embedded = 1", [], |r| {
+                    r.get(0)
+                })?;
+        Ok((by_status, embedded as u64))
+    }
+
+    /// Quarantined files and why.
+    pub fn quarantined(&self) -> rusqlite::Result<Vec<(String, String)>> {
+        let mut stmt = self.0.prepare(
+            "SELECT path, COALESCE(note, '') FROM files WHERE status = 'quarantined' ORDER BY path",
+        )?;
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect()
+    }
+
     /// Marks every file a previous run died on as quarantined, and returns them.
     pub fn quarantine_unfinished(&self) -> rusqlite::Result<Vec<String>> {
         let mut stmt = self
@@ -189,6 +225,32 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn counts_lists_quarantine_and_clears() {
+        let state = State::in_memory().unwrap();
+        let seen = |status| Seen {
+            size: 1,
+            modified: 1,
+            status,
+        };
+        state.set("a", seen(Status::Indexed), None).unwrap();
+        state.set("b", seen(Status::Indexed), None).unwrap();
+        state
+            .set("c", seen(Status::Quarantined), Some("hung"))
+            .unwrap();
+        state.set_vectors("a", &[(1, 0.5, vec![1, 2])]).unwrap();
+        let (by_status, embedded) = state.counts().unwrap();
+        assert_eq!(by_status, [(Status::Indexed, 2), (Status::Quarantined, 1)]);
+        assert_eq!(embedded, 1);
+        assert_eq!(
+            state.quarantined().unwrap(),
+            [("c".to_string(), "hung".to_string())]
+        );
+        state.clear().unwrap();
+        assert!(state.paths().unwrap().is_empty());
+        assert!(state.vectors().unwrap().is_empty());
+    }
 
     #[test]
     fn remembers_files_and_quarantines_unfinished_ones() {

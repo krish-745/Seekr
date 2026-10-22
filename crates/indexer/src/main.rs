@@ -85,6 +85,13 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         return Ok(ExitCode::SUCCESS);
     }
     let state = State::open(&content::state_path())?;
+    let rebuild = content::take_rebuild();
+    if rebuild {
+        tracing::info!("rebuilding the content index from scratch");
+        writer.delete_all_documents()?;
+        writer.commit()?;
+        state.clear()?;
+    }
     for path in state.quarantine_unfinished()? {
         tracing::warn!("quarantined {path}: a run stopped while reading it");
     }
@@ -109,7 +116,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         pending: Vec::new(),
         model: None,
         embedded: 0,
-        vectors_changed: false,
+        // A rebuild leaves no vectors, which the app must see too.
+        vectors_changed: rebuild,
         files_seen: 0,
         paused: false,
         reported: Instant::now(),

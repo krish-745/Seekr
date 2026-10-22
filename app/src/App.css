@@ -378,6 +378,52 @@ kbd {
   color: #e5534b;
 }
 
+.diagnostics h3 {
+  margin: 18px 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.diagnostics table {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.diagnostics td,
+.diagnostics th {
+  padding: 2px 16px 2px 0;
+  text-align: left;
+  font-weight: normal;
+  color: var(--text-muted);
+}
+
+.diagnostics td:first-child {
+  color: var(--text);
+}
+
+.diagnostics .bucket {
+  display: inline-flex;
+  align-items: flex-end;
+  width: 30px;
+  height: 18px;
+  margin-right: 2px;
+  font-size: 10px;
+}
+
+.diagnostics .bar {
+  width: 100%;
+  min-height: 1px;
+  background: var(--accent);
+}
+
+.diagnostics .log {
+  margin: 0;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}
+
 .fields li {
   flex-wrap: wrap;
   row-gap: 2px;

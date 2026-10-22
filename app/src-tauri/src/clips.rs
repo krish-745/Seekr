@@ -123,6 +123,13 @@ impl Clips {
     }
 
     /// Stores a copy (or moves an identical one to the top) and drops what is past keeping.
+    /// How many entries are kept, for diagnostics.
+    pub fn count(&self) -> usize {
+        let db = self.db.lock().unwrap();
+        db.query_row("SELECT COUNT(*) FROM clips", [], |r| r.get::<_, i64>(0))
+            .map_or(0, |n| n as usize)
+    }
+
     /// Saves an entry, keeping `keep` (days, entries) of history.
     fn add(&self, captured: Captured, at: i64, keep: (u32, u32)) -> rusqlite::Result<()> {
         let hash = fingerprint(&captured);

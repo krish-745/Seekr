@@ -28,6 +28,11 @@ pub fn get() -> Arc<Config> {
     CURRENT.read().unwrap().clone()
 }
 
+/// Why config.toml isn't applied, if it isn't.
+pub fn problem() -> Option<String> {
+    PROBLEM.lock().unwrap().clone()
+}
+
 pub fn path() -> PathBuf {
     common::config_dir().join("config.toml")
 }
@@ -458,6 +463,46 @@ fn fields(c: &Config) -> Vec<Field> {
             "action",
             json!(path().display().to_string()),
             "Changes there apply within two seconds",
+        ),
+        field(
+            "diagnostics",
+            "Maintenance",
+            "Diagnostics",
+            "action",
+            json!(""),
+            "Index counts, recent latencies, quarantined files and the log",
+        ),
+        field(
+            "export",
+            "Maintenance",
+            "Export settings",
+            "action",
+            json!(""),
+            "config.toml, your content folders and theme.css in one file; no API keys",
+        ),
+        field(
+            "import",
+            "Maintenance",
+            "Import settings",
+            "action",
+            json!(""),
+            "Replaces config.toml, the content folders and theme.css with an export's",
+        ),
+        field(
+            "rebuild_content",
+            "Maintenance",
+            "Rebuild the content index",
+            "action",
+            json!(""),
+            "Reads every file in your content folders again; meaning indexing takes a few minutes",
+        ),
+        field(
+            "rebuild_files",
+            "Maintenance",
+            "Rebuild the file-name index",
+            "action",
+            json!(""),
+            "Forgets the saved file names and restarts Seekr, which reads them again",
         ),
     ]
 }

@@ -1,7 +1,8 @@
 //! Built-in latency telemetry, summarised to the log in batches when the panel hides.
 
-use std::{sync::Mutex, time::Instant};
+use std::{collections::VecDeque, sync::Mutex, time::Instant};
 
+use serde::Serialize;
 use tauri::{AppHandle, State};
 
 /// show: hotkey to panel ready; keystroke: to the first results painted; files and content: to
@@ -9,11 +10,28 @@ use tauri::{AppHandle, State};
 const METRICS: [&str; 4] = ["show", "keystroke", "files", "content"];
 /// Samples per metric before a summary line is logged, so everyday use stays quiet.
 const BATCH: usize = 50;
+/// Recent samples kept for the diagnostics view, all metrics together.
+const KEPT: usize = 2_000;
+/// Histogram bucket upper bounds in ms; the last bucket is everything slower.
+const BUCKETS: [f64; 6] = [5.0, 10.0, 16.0, 30.0, 50.0, 100.0];
+
+/// One metric's recent latencies, for the diagnostics view.
+#[derive(Serialize)]
+pub struct Latency {
+    metric: &'static str,
+    n: usize,
+    p50: f64,
+    p95: f64,
+    max: f64,
+    /// Samples per bucket of BUCKETS, plus one for slower ones.
+    buckets: Vec<usize>,
+}
 
 #[derive(Default)]
 pub struct Telemetry {
     shown_at: Mutex<Option<Instant>>,
     samples: Mutex<Vec<(&'static str, f64)>>,
+    recent: Mutex<VecDeque<(&'static str, f64)>>,
 }
 
 impl Telemetry {
@@ -24,6 +42,42 @@ impl Telemetry {
 
     fn record(&self, metric: &'static str, ms: f64) {
         self.samples.lock().unwrap().push((metric, ms));
+        let mut recent = self.recent.lock().unwrap();
+        if recent.len() == KEPT {
+            recent.pop_front();
+        }
+        recent.push_back((metric, ms));
+    }
+
+    /// Percentiles and a histogram of each metric's recent samples, since Seekr started.
+    pub fn summary(&self) -> Vec<Latency> {
+        let recent = self.recent.lock().unwrap();
+        METRICS
+            .iter()
+            .filter_map(|&metric| {
+                let mut ms: Vec<f64> = recent
+                    .iter()
+                    .filter(|(m, _)| *m == metric)
+                    .map(|(_, v)| *v)
+                    .collect();
+                if ms.is_empty() {
+                    return None;
+                }
+                ms.sort_by(f64::total_cmp);
+                let mut buckets = vec![0; BUCKETS.len() + 1];
+                for v in &ms {
+                    buckets[BUCKETS.iter().position(|b| v <= b).unwrap_or(BUCKETS.len())] += 1;
+                }
+                Some(Latency {
+                    metric,
+                    n: ms.len(),
+                    p50: percentile(&ms, 0.50),
+                    p95: percentile(&ms, 0.95),
+                    max: ms[ms.len() - 1],
+                    buckets,
+                })
+            })
+            .collect()
     }
 
     /// Logs a summary for each metric that has collected a full batch, keeping the rest.
@@ -98,5 +152,22 @@ mod tests {
         t.record("show", 1.0);
         t.flush();
         assert_eq!(*t.samples.lock().unwrap(), [("show", 1.0)]);
+    }
+
+    #[test]
+    fn summary_buckets_recent_samples() {
+        let t = Telemetry::default();
+        for ms in [3.0, 12.0, 15.0, 250.0] {
+            t.record("files", ms);
+        }
+        let summary = t.summary();
+        assert_eq!(summary.len(), 1);
+        let files = &summary[0];
+        assert_eq!((files.metric, files.n, files.max), ("files", 4, 250.0));
+        assert_eq!(files.buckets, [1, 0, 2, 0, 0, 0, 1]);
+        for i in 0..KEPT + 5 {
+            t.record("show", i as f64);
+        }
+        assert_eq!(t.recent.lock().unwrap().len(), KEPT);
     }
 }

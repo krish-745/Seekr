@@ -213,6 +213,23 @@ impl Ai {
         *current = picked;
     }
 
+    /// For diagnostics: whether the local model is installed, and loaded.
+    pub fn status(&self) -> String {
+        let model = self.model();
+        if !model_path(&model).exists() || !runtime().exists() {
+            return format!("{model}: not on this PC");
+        }
+        let loaded = self.server.lock().unwrap().is_some();
+        format!(
+            "{model}: {}",
+            if loaded {
+                "loaded on the GPU"
+            } else {
+                "installed, not loaded"
+            }
+        )
+    }
+
     fn model(&self) -> String {
         self.picked.lock().unwrap().model.clone()
     }

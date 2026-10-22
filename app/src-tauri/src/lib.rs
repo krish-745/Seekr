@@ -13,6 +13,7 @@ mod files;
 mod focus;
 mod hotkey;
 mod indexer;
+mod maintenance;
 mod notes;
 mod paste;
 mod preview;
@@ -389,6 +390,8 @@ pub fn run() {
             query::toggle_pin,
             preview::preview,
             settings::settings,
+            maintenance::maintenance,
+            maintenance::diagnostics,
             settings::save_setting,
             aisetup::ai_setup,
             aisetup::install_ai,

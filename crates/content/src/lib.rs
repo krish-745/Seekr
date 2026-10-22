@@ -61,6 +61,22 @@ pub fn set_paused(paused: bool) -> io::Result<()> {
     }
 }
 
+/// Left by the app's "Rebuild content index"; the next indexer run, which holds the index's
+/// lock, empties the index and its state and reads every file again.
+fn rebuild_path() -> PathBuf {
+    dir().join("rebuild")
+}
+
+pub fn request_rebuild() -> io::Result<()> {
+    fs::create_dir_all(dir())?;
+    fs::write(rebuild_path(), b"")
+}
+
+/// Whether a rebuild was asked for; asking again needs a new request.
+pub fn take_rebuild() -> bool {
+    fs::remove_file(rebuild_path()).is_ok()
+}
+
 fn progress_path() -> PathBuf {
     dir().join("progress.txt")
 }

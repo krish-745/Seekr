@@ -108,6 +108,11 @@ Type `settings` (or use the tray icon's Settings) for the settings view. Arrow k
 - whether meaning indexing runs on battery
 - how the panel looks: light, dark or following Windows; the accent color; a Mica, acrylic or solid backdrop and how much of the panel's color covers it; the font and its size; comfortable or compact rows; and the panel's size
 
+At the end of Settings, Maintenance has:
+- **Diagnostics:** index counts, recent latencies with a histogram, quarantined files, and the end of the log.
+- **Export settings** and **Import settings:** one file with config.toml, your content folders and theme.css. API keys stay in your environment and are never exported.
+- **Rebuild the content index** and **Rebuild the file-name index:** each asks for a second Enter first. The file-name rebuild restarts Seekr.
+
 For anything else, Edit theme.css in Settings opens `%APPDATA%\Seekr\theme.css`, your own CSS loaded after Seekr's (the colors are variables such as `--accent` and `--selection`).
 
 Everything is saved to `%APPDATA%\Seekr\config.toml` (your comments in it are kept) and applies at once, without a restart. Editing that file by hand works too: a saved change applies within two seconds, and a mistake shows at the top of the settings view while Seekr keeps the settings it had.
