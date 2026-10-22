@@ -46,6 +46,47 @@
   --danger: #ff99a4;
 }
 
+/* Windows' high-contrast themes replace colors with system ones and drop backgrounds, which
+   is how the selection shows otherwise, so it gets an outline in the theme's colors. */
+@media (forced-colors: active) {
+  html,
+  body {
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .row.selected,
+  .folders li.selected,
+  .actions li.selected {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  .cite,
+  .chip {
+    border: 1px solid CanvasText;
+  }
+
+  .chip.invalid {
+    text-decoration: line-through;
+  }
+
+  .diagnostics .bar {
+    background: Highlight;
+  }
+}
+
+/* Nothing in Seekr moves, and a theme.css that adds motion is held still too. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 html,
 body {
   margin: 0;

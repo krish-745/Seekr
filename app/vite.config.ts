@@ -6,7 +6,8 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(() => ({
-  plugins: [solid()],
+  // Hot reload needs Vite's dev server, which tests don't run.
+  plugins: [solid({ hot: !process.env.VITEST })],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

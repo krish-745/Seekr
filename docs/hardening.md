@@ -27,6 +27,14 @@ file as it is first opened, outside Seekr.
 PDFs aren't read at all yet (no PDF text extraction is built), so malformed PDFs can't reach
 the extractor.
 
+## 7.3 Accessibility
+
+Roles, names and live regions were added throughout the panel, high-contrast and reduced-motion
+styles, and keyboard access to answer sources. `app/src/a11y.test.tsx` checks the results list,
+the actions menu and the settings view with axe-core (no violations) and follows the selection
+by keyboard through `aria-activedescendant`. Not yet tried with a running screen reader or a
+high-contrast theme on screen; those need the panel driven on this PC.
+
 ## 7.2 Soak
 
 `scripts/soak.ps1` samples Seekr's processes (CPU time, working set, private memory, handles,

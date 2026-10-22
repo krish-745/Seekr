@@ -117,6 +117,13 @@ For anything else, Edit theme.css in Settings opens `%APPDATA%\Seekr\theme.css`,
 
 Everything is saved to `%APPDATA%\Seekr\config.toml` (your comments in it are kept) and applies at once, without a restart. Editing that file by hand works too: a saved change applies within two seconds, and a mistake shows at the top of the settings view while Seekr keeps the settings it had.
 
+## Accessibility
+
+- Everything works from the keyboard; in an AI answer, Ctrl+1 to Ctrl+9 open its sources.
+- Screen readers (Narrator, NVDA) follow the selection: the query box is a combobox over the results list, and the actions menu, settings and folder picker are lists that name the current entry. An AI answer is read once it is written, not word by word; confirmations and errors are announced.
+- Windows' high-contrast themes are followed, with the selection outlined in the theme's colors.
+- Nothing in the panel moves, and with "Animation effects" off in Windows, motion added by a theme.css is stopped too.
+
 ## Develop
 
 Requirements: Windows 11, Rust (stable, MSVC), Visual Studio Build Tools with the C++ workload, Node.js 20+.

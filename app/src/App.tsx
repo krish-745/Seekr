@@ -652,6 +652,9 @@ function App() {
         setActionIndex(0);
         setActionsOpen(true);
       }
+    } else if (e.ctrlKey && /^Digit[1-9]$/.test(e.code) && answer()?.sources.length) {
+      // Citations, without the mouse.
+      openSource(Number(e.code.slice(5)));
     } else if (e.altKey && /^Digit[1-9]$/.test(e.code)) {
       const target = items()[firstVisible(list.scrollTop, row()) + Number(e.code.slice(5)) - 1];
       run(target, target?.actions[0]?.id);
@@ -696,17 +699,28 @@ function App() {
               Seekr can search inside the files in folders you choose, by words and by meaning. Nothing is read until you
               tick a folder.
             </p>
-            <ul class="folders">
+            <ul
+              class="folders"
+              role="listbox"
+              aria-label="Folders to search inside"
+              aria-activedescendant={`folder-${setupIndex()}`}
+              tabIndex={-1}
+              ref={(el) => requestAnimationFrame(() => el.focus())}
+            >
               <For each={s().folders}>
                 {(f, i) => (
                   <li
+                    id={`folder-${i()}`}
+                    role="option"
+                    aria-selected={i() === setupIndex()}
+                    aria-checked={f.checked}
                     classList={{ selected: i() === setupIndex() }}
                     onClick={() => {
                       setSetupIndex(i());
                       toggleFolder(i());
                     }}
                   >
-                    <input type="checkbox" checked={f.checked} tabIndex={-1} />
+                    <input type="checkbox" checked={f.checked} tabIndex={-1} aria-hidden="true" />
                     <span>{f.path}</span>
                   </li>
                 )}
@@ -726,14 +740,27 @@ function App() {
             <Show when={s().view.problem}>
               {(problem) => <p class="error">config.toml isn't applied until this is fixed: {problem()}</p>}
             </Show>
-            <ul class="folders fields">
+            <ul
+              class="folders fields"
+              role="listbox"
+              aria-label="Settings"
+              aria-activedescendant={`setting-${s().index}`}
+              tabIndex={-1}
+              ref={(el) => requestAnimationFrame(() => el.focus())}
+            >
               <For each={s().view.fields}>
                 {(f, i) => (
                   <>
                     <Show when={i() === 0 || s().view.fields[i() - 1].group !== f.group}>
-                      <li class="group">{f.group}</li>
+                      <li class="group" role="presentation">
+                        {f.group}
+                      </li>
                     </Show>
                     <li
+                      id={`setting-${i()}`}
+                      role="option"
+                      aria-selected={i() === s().index}
+                      aria-description={[f.group, f.hint].filter(Boolean).join(". ")}
                       classList={{ selected: i() === s().index }}
                       ref={(el) => i() === s().index && requestAnimationFrame(() => el.scrollIntoView({ block: "nearest" }))}
                       onClick={() => setSettingsState({ ...s(), index: i(), draft: undefined })}
@@ -789,13 +816,22 @@ function App() {
       </Show>
       <Show when={diagnostics()}>
         {(d) => (
-          <section class="setup diagnostics" ref={diagnosticsPane}>
+          <section
+            class="setup diagnostics"
+            aria-label="Diagnostics"
+            tabIndex={-1}
+            ref={(el) => {
+              diagnosticsPane = el;
+              requestAnimationFrame(() => el.focus());
+            }}
+          >
             <h2>Diagnostics</h2>
             <For each={d().sections}>
               {(section) => (
                 <>
                   <h3>{section.title}</h3>
                   <table>
+                  <tbody>
                     <For each={section.rows}>
                       {(r) => (
                         <tr>
@@ -804,6 +840,7 @@ function App() {
                         </tr>
                       )}
                     </For>
+                  </tbody>
                   </table>
                 </>
               )}
@@ -811,6 +848,7 @@ function App() {
             <h3>Latency since Seekr started (ms)</h3>
             <Show when={d().latency.length > 0} fallback={<p class="subtitle">No samples yet.</p>}>
               <table class="latency">
+              <tbody>
                 <tr>
                   <th />
                   <th>n</th>
@@ -841,6 +879,7 @@ function App() {
                     </tr>
                   )}
                 </For>
+              </tbody>
               </table>
             </Show>
             <h3>Quarantined files</h3>
@@ -863,7 +902,7 @@ function App() {
               Questions about your files are answered by a model on this PC, so your files never leave it. It needs
               these, downloaded once from GitHub and Hugging Face and checked before use:
             </p>
-            <ul class="folders downloads">
+            <ul class="folders downloads" aria-label="Downloads">
               <For each={v().info.parts}>
                 {(part, i) => (
                   <li>
@@ -875,7 +914,11 @@ function App() {
                           ? `${gb(v().got[i()])} of ${gb(part.bytes)}`
                           : gb(part.bytes)}
                     </span>
-                    <progress max={part.bytes} value={part.done ? part.bytes : v().got[i()]} />
+                    <progress
+                      max={part.bytes}
+                      value={part.done ? part.bytes : v().got[i()]}
+                      aria-label={part.label}
+                    />
                   </li>
                 )}
               </For>
@@ -894,6 +937,14 @@ function App() {
         ref={input}
         classList={{ hidden: covered() }}
         class="query"
+        role="combobox"
+        aria-label="Search"
+        aria-expanded={items().length > 0}
+        aria-controls="results"
+        aria-autocomplete="list"
+        aria-activedescendant={
+          actionsOpen() ? `action-${actionIndex()}` : items().length ? `row-${selected()}` : undefined
+        }
         placeholder="Search apps, files and more"
         spellcheck={false}
         autofocus
@@ -911,12 +962,25 @@ function App() {
         </div>
       </Show>
       <div class="body" classList={{ hidden: covered() }}>
-        <div class="results" ref={list} onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}>
+        <div
+          class="results"
+          id="results"
+          role="listbox"
+          aria-label="Results"
+          ref={list}
+          onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+        >
           <div class="rows" style={{ height: `${items().length * row()}px` }}>
             <For each={rows()}>
               {(i) => (
                 <div
                   class="row"
+                  id={`row-${i}`}
+                  role="option"
+                  aria-selected={i === selected()}
+                  aria-setsize={items().length}
+                  aria-posinset={i + 1}
+                  aria-description={items()[i]?.subtitle}
                   classList={{ selected: i === selected() }}
                   style={{ top: `${i * row()}px` }}
                   onClick={() => select(i)}
@@ -929,16 +993,20 @@ function App() {
                     <div class="title">{items()[i]?.title}</div>
                     <div class="subtitle">{items()[i]?.subtitle}</div>
                   </div>
-                  <kbd class="number">{numberOf(i)}</kbd>
+                  <kbd class="number" aria-hidden="true">
+                    {numberOf(i)}
+                  </kbd>
                 </div>
               )}
             </For>
           </div>
           <Show when={items().length === 0}>
-            <div class="empty">{query().trim() ? "No results" : "Type to search apps"}</div>
+            <div class="empty" role="status">
+              {query().trim() ? "No results" : "Type to search apps"}
+            </div>
           </Show>
         </div>
-        <aside class="preview">
+        <aside class="preview" aria-label="Preview">
           <Show when={editing()}>
             {(note) => (
               <textarea
@@ -952,7 +1020,7 @@ function App() {
           </Show>
           <Show when={!editing() && answer()}>
             {(a) => (
-              <div class="answer">
+              <div class="answer" aria-live="polite" aria-busy={a().busy}>
                 <Show when={a().file}>
                   {(file) => <p class="subtitle">About {fileName(file())} · follow-ups with ? ask about it too</p>}
                 </Show>
@@ -965,7 +1033,13 @@ function App() {
                           {(part) => {
                             const cited = /^\[(\d+)\]$/.exec(part);
                             return cited ? (
-                              <button class="cite" title="Open this file" onClick={() => openSource(Number(cited[1]))}>
+                              <button
+                                class="cite"
+                                title="Open this file"
+                                aria-label={`Source ${cited[1]}`}
+                                tabIndex={-1}
+                                onClick={() => openSource(Number(cited[1]))}
+                              >
                                 {cited[1]}
                               </button>
                             ) : (
@@ -1066,10 +1140,16 @@ function App() {
           </Show>
         </aside>
         <Show when={actionsOpen()}>
-          <ul class="actions">
+          <ul class="actions" role="listbox" aria-label="Actions">
             <For each={current()?.actions ?? []}>
               {(action, i) => (
-                <li classList={{ selected: i() === actionIndex() }} onClick={() => run(current(), action.id)}>
+                <li
+                  id={`action-${i()}`}
+                  role="option"
+                  aria-selected={i() === actionIndex()}
+                  classList={{ selected: i() === actionIndex() }}
+                  onClick={() => run(current(), action.id)}
+                >
                   {action.label}
                 </li>
               )}
@@ -1086,14 +1166,32 @@ function App() {
                 <>
                   <span><kbd>↵</kbd> {s().confirm ? "Confirm" : "Change"}</span>
                   <span><kbd>Esc</kbd> Close</span>
-                  <Show when={s().notice}>{(notice) => <span class="confirm">{notice()}</span>}</Show>
-                  <Show when={s().error}>{(error) => <span class="error">{error()}</span>}</Show>
+                  <Show when={s().notice}>
+                    {(notice) => (
+                      <span class="confirm" role="status">
+                        {notice()}
+                      </span>
+                    )}
+                  </Show>
+                  <Show when={s().error}>
+                    {(error) => (
+                      <span class="error" role="alert">
+                        {error()}
+                      </span>
+                    )}
+                  </Show>
                 </>
               }
             >
               <span><kbd>{s().view.fields[s().index]?.kind === "lines" ? "Ctrl+↵" : "↵"}</kbd> Save</span>
               <span><kbd>Esc</kbd> Cancel</span>
-              <Show when={s().error}>{(error) => <span class="error">{error()}</span>}</Show>
+              <Show when={s().error}>
+                {(error) => (
+                  <span class="error" role="alert">
+                    {error()}
+                  </span>
+                )}
+              </Show>
             </Show>
           )}
         </Show>
@@ -1132,12 +1230,15 @@ function App() {
                 <Show when={(current()?.actions.length ?? 0) > 0}>
                   <span><kbd>Tab</kbd> Actions</span>
                 </Show>
+                <Show when={answer()?.sources.length}>
+                  <span><kbd>Ctrl+1…9</kbd> Open a source</span>
+                </Show>
                 <span><kbd>Esc</kbd> {answer()?.busy ? "Stop" : actionsOpen() ? "Back" : "Close"}</span>
               </>
             }
           >
             {(asked) => (
-              <span class="confirm">
+              <span class="confirm" role="alert">
                 <kbd>↵</kbd> {CONFIRM[asked().action](asked().item)} · any other key cancels
               </span>
             )}
