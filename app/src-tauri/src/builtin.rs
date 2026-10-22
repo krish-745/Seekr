@@ -102,6 +102,20 @@ pub(crate) const CONFIG_TEMPLATE: &str = "\
 # The words that open a list: clipboard, windows, emoji, note, todo.
 # [prefixes]
 # clipboard = \"cb\"
+#
+# How the panel looks. mode: system, light or dark; backdrop: mica, acrylic or solid;
+# opacity: how much of the panel's color covers the backdrop (0 to 100); density: comfortable
+# or compact. Your own CSS goes in theme.css next to this file.
+# [theme]
+# mode = \"dark\"
+# accent = \"#e81123\"
+# backdrop = \"acrylic\"
+# opacity = 40
+# font = \"Cascadia Sans\"
+# font_size = 15
+# density = \"compact\"
+# width = 900
+# height = 560
 ";
 
 fn config_path() -> PathBuf {
@@ -287,6 +301,13 @@ pub fn run(app: &AppHandle, item: &str, action: &str) -> Result<(), String> {
             ensure_config()?;
             opener.reveal_item_in_dir(config_path())
         }
+        ("seekr:themecss", "open") => {
+            ensure_file(&crate::settings::css_path(), CSS_TEMPLATE)?;
+            opener.open_path(
+                crate::settings::css_path().display().to_string(),
+                None::<&str>,
+            )
+        }
         ("seekr:logs", "open") => opener.open_path(logs_dir().display().to_string(), None::<&str>),
         ("seekr:quit", "quit") => {
             app.exit(0);
@@ -297,18 +318,31 @@ pub fn run(app: &AppHandle, item: &str, action: &str) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+const CSS_TEMPLATE: &str = "\
+/* Your styles for Seekr's panel, loaded after Seekr's own. Saved changes show the next time the
+   panel opens. Seekr's colors are variables you can set here, for example: */
+/*
+:root {
+  --accent: #e81123;
+  --selection: rgb(232 17 35 / 0.12);
+}
+.row .subtitle { font-style: italic; }
+*/
+";
+
 /// Creates the commented template once; never overwrites a config the user wrote.
 fn ensure_config() -> Result<(), String> {
-    let path = config_path();
+    ensure_file(&config_path(), CONFIG_TEMPLATE)
+}
+
+fn ensure_file(path: &std::path::Path, template: &str) -> Result<(), String> {
     fs::create_dir_all(common::config_dir()).map_err(|e| e.to_string())?;
     match fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(&path)
+        .open(path)
     {
-        Ok(mut f) => f
-            .write_all(CONFIG_TEMPLATE.as_bytes())
-            .map_err(|e| e.to_string()),
+        Ok(mut f) => f.write_all(template.as_bytes()).map_err(|e| e.to_string()),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
         Err(e) => Err(e.to_string()),
     }

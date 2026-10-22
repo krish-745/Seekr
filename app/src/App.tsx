@@ -66,7 +66,7 @@ type Field = {
   choices?: string[];
   hint: string;
 };
-type SettingsView = { fields: Field[]; problem: string | null; path: string };
+type SettingsView = { fields: Field[]; problem: string | null; path: string; css: number | null };
 type SettingsState = { view: SettingsView; index: number; draft?: string; error?: string };
 
 type Source = { n: number; path: string; line: number; name: string };
@@ -109,8 +109,14 @@ type AiSetupView = { info: AiSetup; running: boolean; got: number[]; status?: st
 const gb = (bytes: number) => `${(bytes / 1e9).toFixed(bytes < 1e9 ? 2 : 1)} GB`;
 const fileName = (path: string) => path.slice(path.lastIndexOf("\\") + 1);
 
-/** Row height in CSS px; must match `.row` in App.css. */
-const ROW = 44;
+/** Row heights in CSS px, comfortable and compact; App.css reads the one in use from --row. */
+const ROWS = { comfortable: 44, compact: 34 };
+
+/** Whether the panel is dark: the theme's mode, or Windows' when it follows the system. */
+const isDark = () => {
+  const mode = document.documentElement.dataset.theme;
+  return mode ? mode === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+};
 
 function App() {
   let input!: HTMLInputElement;
@@ -178,7 +184,43 @@ function App() {
     }
     input.focus();
   }
+  const [row, setRow] = createSignal(ROWS.comfortable);
+
+  /** Applies the theme settings: CSS variables, light or dark, and the user's theme.css. */
+  function applyTheme(view: SettingsView) {
+    const theme = Object.fromEntries(
+      view.fields.filter((f) => f.key.startsWith("theme.")).map((f) => [f.key.slice(6), f.value]),
+    );
+    const root = document.documentElement;
+    if (theme.mode === "light" || theme.mode === "dark") root.dataset.theme = String(theme.mode);
+    else delete root.dataset.theme;
+    const set = (name: string, value: string | undefined) =>
+      value ? root.style.setProperty(name, value) : root.style.removeProperty(name);
+    set("--accent", theme.accent ? String(theme.accent) : undefined);
+    set("--font", theme.font ? `"${theme.font}", var(--font-default)` : undefined);
+    set("--font-size", `${theme.font_size}px`);
+    const height = theme.density === "compact" ? ROWS.compact : ROWS.comfortable;
+    setRow(height);
+    set("--row", `${height}px`);
+    const solid = theme.backdrop === "solid";
+    set("--tint", `${solid ? 100 : Number(theme.opacity)}%`);
+    set("--panel", solid ? "var(--solid)" : undefined);
+    let link = document.getElementById("user-css") as HTMLLinkElement | null;
+    if (view.css === null) link?.remove();
+    else {
+      if (!link) {
+        link = document.createElement("link");
+        link.id = "user-css";
+        link.rel = "stylesheet";
+        document.head.append(link);
+      }
+      const href = `http://theme.localhost/theme.css?v=${view.css}`;
+      if (link.href !== href) link.href = href;
+    }
+  }
+
   function takePrefixes(view: SettingsView) {
+    applyTheme(view);
     setPrefixes(Object.fromEntries(view.fields.filter((f) => f.key.startsWith("prefixes.")).map((f) => [f.key, String(f.value)])));
   }
 
@@ -222,6 +264,7 @@ function App() {
       setSettingsState(undefined);
       openSetup(false);
     } else if (field.key === "config") invoke("run_action", { item: "seekr:config", action: "open", query: "" });
+    else if (field.key === "theme.css") invoke("run_action", { item: "seekr:themecss", action: "open", query: "" });
     else setSettingsState({ ...s, draft: String(field.value), error: undefined });
   }
 
@@ -288,7 +331,7 @@ function App() {
         return;
       }
       if (!item?.id.startsWith("path:")) return;
-      const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+      const dark = isDark();
       previewTimer = setTimeout(() => {
         invoke<Preview>("preview", { path: item.id.slice(5), dark, line: item.line ?? null }).then((p) => {
           if (current()?.id === item.id) setPreview(p);
@@ -296,7 +339,7 @@ function App() {
       }, 60);
     }),
   );
-  const range = createMemo(() => visibleRange(scrollTop(), viewport(), ROW, items().length));
+  const range = createMemo(() => visibleRange(scrollTop(), viewport(), row(), items().length));
   const rows = createMemo(() => {
     const [start, end] = range();
     return Array.from({ length: end - start }, (_, i) => start + i);
@@ -363,7 +406,7 @@ function App() {
 
   function select(index: number) {
     setSelected(index);
-    if (list) list.scrollTop = scrollFor(index, list.scrollTop, list.clientHeight, ROW);
+    if (list) list.scrollTop = scrollFor(index, list.scrollTop, list.clientHeight, row());
   }
 
   function run(item: Item | undefined, actionId: string | undefined) {
@@ -561,7 +604,7 @@ function App() {
         setActionsOpen(true);
       }
     } else if (e.altKey && /^Digit[1-9]$/.test(e.code)) {
-      const target = items()[firstVisible(list.scrollTop, ROW) + Number(e.code.slice(5)) - 1];
+      const target = items()[firstVisible(list.scrollTop, row()) + Number(e.code.slice(5)) - 1];
       run(target, target?.actions[0]?.id);
     } else if (e.key === "Escape") invoke("hide");
     else return;
@@ -590,7 +633,7 @@ function App() {
   });
 
   const numberOf = (index: number) => {
-    const n = index - firstVisible(scrollTop(), ROW) + 1;
+    const n = index - firstVisible(scrollTop(), row()) + 1;
     return n >= 1 && n <= 9 ? `Alt+${n}` : "";
   };
 
@@ -752,13 +795,13 @@ function App() {
       </Show>
       <div class="body" classList={{ hidden: covered() }}>
         <div class="results" ref={list} onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}>
-          <div class="rows" style={{ height: `${items().length * ROW}px` }}>
+          <div class="rows" style={{ height: `${items().length * row()}px` }}>
             <For each={rows()}>
               {(i) => (
                 <div
                   class="row"
                   classList={{ selected: i === selected() }}
-                  style={{ top: `${i * ROW}px` }}
+                  style={{ top: `${i * row()}px` }}
                   onClick={() => select(i)}
                   onDblClick={() => run(items()[i], items()[i]?.actions[0]?.id)}
                 >

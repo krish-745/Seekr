@@ -89,6 +89,10 @@ pub fn reload(app: &AppHandle) {
     if let Some(ai) = app.try_state::<Ai>() {
         ai.apply(&new);
     }
+    // The panel takes up colors and fonts the next time it is shown.
+    if old.theme != new.theme {
+        crate::apply_backdrop(app);
+    }
     // The indexer reads both at each pass; a full pass drops what is now left out.
     if (&old.exclude, old.embed_on_battery) != (&new.exclude, new.embed_on_battery)
         && let Some(indexer) = app.try_state::<Indexer>()
@@ -117,6 +121,13 @@ pub struct View {
     /// Why config.toml isn't applied, if it isn't.
     problem: Option<String>,
     path: String,
+    /// theme.css's last change (Unix seconds), so the panel reloads it; None without one.
+    css: Option<u64>,
+}
+
+/// `%APPDATA%\Seekr\theme.css`: the user's own styles, loaded after Seekr's.
+pub fn css_path() -> PathBuf {
+    common::config_dir().join("theme.css")
 }
 
 fn field(
@@ -351,6 +362,95 @@ fn fields(c: &Config) -> Vec<Field> {
             json!(c.embed_on_battery),
             "Off: a big indexing pass waits for mains power",
         ),
+        Field {
+            choices: &["system", "light", "dark"],
+            ..field(
+                "theme.mode",
+                "Appearance",
+                "Light or dark",
+                "choice",
+                json!(c.theme.mode),
+                "system follows Windows",
+            )
+        },
+        field(
+            "theme.accent",
+            "Appearance",
+            "Accent color",
+            "text",
+            json!(c.theme.accent),
+            "A CSS color such as #e81123 or teal; empty for Windows blue",
+        ),
+        Field {
+            choices: &["mica", "acrylic", "solid"],
+            ..field(
+                "theme.backdrop",
+                "Appearance",
+                "Backdrop",
+                "choice",
+                json!(c.theme.backdrop),
+                "What shows behind the panel",
+            )
+        },
+        field(
+            "theme.opacity",
+            "Appearance",
+            "Panel color over the backdrop (%)",
+            "number",
+            json!(c.theme.opacity),
+            "0 shows the backdrop as it is; 100 hides it",
+        ),
+        field(
+            "theme.font",
+            "Appearance",
+            "Font",
+            "text",
+            json!(c.theme.font),
+            "An installed font's name; empty for Segoe UI",
+        ),
+        field(
+            "theme.font_size",
+            "Appearance",
+            "Font size",
+            "number",
+            json!(c.theme.font_size),
+            "10 to 24",
+        ),
+        Field {
+            choices: &["comfortable", "compact"],
+            ..field(
+                "theme.density",
+                "Appearance",
+                "Row spacing",
+                "choice",
+                json!(c.theme.density),
+                "",
+            )
+        },
+        field(
+            "theme.width",
+            "Appearance",
+            "Panel width",
+            "number",
+            json!(c.theme.width),
+            "500 to 1600; applies the next time the panel opens",
+        ),
+        field(
+            "theme.height",
+            "Appearance",
+            "Panel height",
+            "number",
+            json!(c.theme.height),
+            "300 to 1200; applies the next time the panel opens",
+        ),
+        field(
+            "theme.css",
+            "Appearance",
+            "Edit theme.css",
+            "action",
+            json!(css_path().display().to_string()),
+            "Your own CSS, loaded after Seekr's",
+        ),
         field(
             "config",
             "File",
@@ -368,6 +468,11 @@ pub fn settings() -> View {
         fields: fields(&get()),
         problem: PROBLEM.lock().unwrap().clone(),
         path: path().display().to_string(),
+        css: fs::metadata(css_path())
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs()),
     }
 }
 
@@ -515,6 +620,25 @@ mod tests {
         assert!(edit("", "clipboard_days", &json!("x")).is_err());
         assert!(edit("", "folders", &json!("x")).is_err());
         assert!(edit("hotkey = ", "hotkey", &json!("Alt+Space")).is_err());
+    }
+
+    #[test]
+    fn edits_the_theme_within_its_limits() {
+        let text = edit("", "theme.mode", &json!("dark")).unwrap();
+        let text = edit(&text, "theme.width", &json!(900)).unwrap();
+        let config: Config = toml::from_str(&text).unwrap();
+        assert_eq!(
+            (config.theme.mode.as_str(), config.theme.width),
+            ("dark", 900)
+        );
+        assert!(text.contains("[theme]"), "{text}");
+        assert!(edit(&text, "theme.width", &json!(100)).is_err());
+        assert!(edit(&text, "theme.backdrop", &json!("glass")).is_err());
+        assert!(edit(&text, "theme.font", &json!("x; }")).is_err());
+        assert!(
+            edit("", "theme.css", &json!("x")).is_err(),
+            "an action isn't a value"
+        );
     }
 
     #[test]

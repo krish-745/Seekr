@@ -1,26 +1,49 @@
-/* Theme tokens: Windows 11 text colors over the Mica backdrop, light and dark. */
+/* Theme tokens: Windows 11 text colors over the Mica backdrop, light and dark. config.toml's
+   [theme] sets --accent, --font, --font-size, --row and --tint (how much of --surface covers
+   the backdrop), and data-theme on <html> when it fixes light or dark. */
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
+  --font-size: 14px;
+  --row: 44px;
+  --tint: 0%;
+  --font-default: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --text: rgb(0 0 0 / 0.9);
   --text-muted: rgb(0 0 0 / 0.6);
   --accent: #005fb8;
   --border: rgb(0 0 0 / 0.08);
   --selection: rgb(0 0 0 / 0.06);
   --surface: rgb(255 255 255 / 0.7);
+  /* The panel's color with the solid backdrop. */
+  --solid: #f3f3f3;
   --danger: #c42b1c;
-  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font: var(--font-default);
 }
 
+/* Dark: Windows is dark and the theme doesn't say light, or the theme says dark. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
     --text: #fff;
     --text-muted: rgb(255 255 255 / 0.6);
     --accent: #60cdff;
     --border: rgb(255 255 255 / 0.08);
     --selection: rgb(255 255 255 / 0.08);
     --surface: rgb(40 40 40 / 0.95);
+  --solid: #202020;
     --danger: #ff99a4;
   }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --text: #fff;
+  --text-muted: rgb(255 255 255 / 0.6);
+  --accent: #60cdff;
+  --border: rgb(255 255 255 / 0.08);
+  --selection: rgb(255 255 255 / 0.08);
+  --surface: rgb(40 40 40 / 0.95);
+  --solid: #202020;
+  --danger: #ff99a4;
 }
 
 html,
@@ -28,10 +51,10 @@ body {
   margin: 0;
   height: 100%;
   overflow: hidden;
-  /* Transparent so the Mica backdrop shows through. */
-  background: transparent;
+  /* The backdrop shows through, under as much of the panel's own color as the theme asks. */
+  background: color-mix(in srgb, var(--panel, var(--surface)) var(--tint), transparent);
   color: var(--text);
-  font: 14px/1.4 var(--font);
+  font: var(--font-size) / 1.4 var(--font);
   user-select: none;
 }
 
@@ -98,12 +121,12 @@ body {
   position: relative;
 }
 
-/* Height must match ROW in App.tsx. */
+/* --row is set from ROWS in App.tsx. */
 .row {
   position: absolute;
   left: 6px;
   right: 6px;
-  height: 44px;
+  height: var(--row);
   box-sizing: border-box;
   display: flex;
   align-items: center;

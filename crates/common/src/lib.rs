@@ -64,6 +64,80 @@ pub struct Config {
     pub ai_idle_minutes: u32,
     /// Index content meaning on battery too; by default a big pass waits for mains power.
     pub embed_on_battery: bool,
+    /// How the panel looks.
+    pub theme: Theme,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Theme {
+    /// "system", "light" or "dark".
+    pub mode: String,
+    /// A CSS color for the selection marks and links; empty for Windows' blue.
+    pub accent: String,
+    /// "mica", "acrylic" or "solid".
+    pub backdrop: String,
+    /// How much of the panel's own color covers the backdrop, 0 to 100.
+    pub opacity: u32,
+    /// A font family; empty for Segoe UI.
+    pub font: String,
+    pub font_size: u32,
+    /// "comfortable" or "compact" rows.
+    pub density: String,
+    /// The panel's size in logical pixels.
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self {
+            mode: "system".into(),
+            accent: String::new(),
+            backdrop: "mica".into(),
+            opacity: 0,
+            font: String::new(),
+            font_size: 14,
+            density: "comfortable".into(),
+            width: 760,
+            height: 480,
+        }
+    }
+}
+
+impl Theme {
+    fn check(&self) -> Result<(), String> {
+        let one_of = |value: &str, name: &str, allowed: &[&str]| {
+            if allowed.contains(&value) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "theme {name} must be one of {}",
+                    allowed.join(", ")
+                ))
+            }
+        };
+        one_of(&self.mode, "mode", &["system", "light", "dark"])?;
+        one_of(&self.backdrop, "backdrop", &["mica", "acrylic", "solid"])?;
+        one_of(&self.density, "density", &["comfortable", "compact"])?;
+        let within = |value: u32, name: &str, low: u32, high: u32| {
+            if (low..=high).contains(&value) {
+                Ok(())
+            } else {
+                Err(format!("theme {name} must be from {low} to {high}"))
+            }
+        };
+        within(self.opacity, "opacity", 0, 100)?;
+        within(self.font_size, "font_size", 10, 24)?;
+        within(self.width, "width", 500, 1600)?;
+        within(self.height, "height", 300, 1200)?;
+        // Both go into CSS, so nothing that could end a declaration or a string.
+        let plain = |text: &str| !text.contains([';', '{', '}', '"', '\'', '<', '\\']);
+        if !plain(&self.accent) || !plain(&self.font) {
+            return Err("theme accent and font can't contain ; { } quotes < or \\".into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -132,6 +206,7 @@ impl Default for Config {
             clipboard_entries: 1_000,
             ai_idle_minutes: 10,
             embed_on_battery: false,
+            theme: Theme::default(),
         }
     }
 }
@@ -168,6 +243,7 @@ impl Config {
                 return Err(format!("prefix {word:?} is used twice"));
             }
         }
+        self.theme.check()?;
         if self.clipboard_days == 0 || self.clipboard_entries == 0 || self.ai_idle_minutes == 0 {
             return Err(
                 "clipboard_days, clipboard_entries and ai_idle_minutes must be above 0".into(),
@@ -297,6 +373,9 @@ mod tests {
             ("cb", "todo")
         );
         for bad in [
+            "[theme]\nmode = \"sepia\"",
+            "[theme]\nwidth = 100",
+            "[theme]\naccent = \"red; background: url(x)\"",
             "[prefixes]\nnote = \"todo\"",
             "[prefixes]\nwindows = \"my win\"",
             "ai_idle_minutes = 0",

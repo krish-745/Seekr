@@ -34,8 +34,6 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use telemetry::Telemetry;
 
-/// Panel size in logical pixels, scaled to the target monitor's DPI on every show.
-const PANEL: (f64, f64) = (760.0, 480.0);
 /// Passed by the login entry so the panel stays hidden until the hotkey.
 const HIDDEN_ARG: &str = "--hidden";
 
@@ -118,9 +116,12 @@ fn try_show(app: &AppHandle) -> tauri::Result<()> {
     let mut size = None;
     if let Some(m) = monitor {
         let area = m.work_area();
+        // The panel's size in logical pixels, scaled to the target monitor's DPI on every show.
+        let theme = &settings::get().theme;
         let (x, y, width, height) = place(
             (area.position.x, area.position.y),
             (area.size.width, area.size.height),
+            (f64::from(theme.width), f64::from(theme.height)),
             m.scale_factor(),
         );
         // Move first so any DPI change between monitors lands before the final size is set.
@@ -146,9 +147,9 @@ fn try_show(app: &AppHandle) -> tauri::Result<()> {
 }
 
 /// Centered horizontally, a quarter of the free space above it, clamped to the work area.
-fn place(pos: (i32, i32), size: (u32, u32), scale: f64) -> (i32, i32, u32, u32) {
-    let width = ((PANEL.0 * scale).round() as u32).min(size.0);
-    let height = ((PANEL.1 * scale).round() as u32).min(size.1);
+fn place(pos: (i32, i32), size: (u32, u32), panel: (f64, f64), scale: f64) -> (i32, i32, u32, u32) {
+    let width = ((panel.0 * scale).round() as u32).min(size.0);
+    let height = ((panel.1 * scale).round() as u32).min(size.1);
     let x = pos.0 + ((size.0 - width) / 2) as i32;
     let y = pos.1 + ((size.1 - height) / 4) as i32;
     (x, y, width, height)
@@ -158,6 +159,36 @@ fn log_err<T>(what: &str, result: tauri::Result<T>) {
     if let Err(e) = result {
         tracing::error!("{what} failed: {e}");
     }
+}
+
+/// The window's backdrop and light or dark frame, from config.toml's theme.
+pub(crate) fn apply_backdrop(app: &AppHandle) {
+    use tauri::{
+        Theme,
+        window::{Color, Effect, EffectsBuilder},
+    };
+    let Some(w) = app.get_webview_window("main") else {
+        return;
+    };
+    let theme = &settings::get().theme;
+    let (mode, mica) = match theme.mode.as_str() {
+        "light" => (Some(Theme::Light), Effect::MicaLight),
+        "dark" => (Some(Theme::Dark), Effect::MicaDark),
+        _ => (None, Effect::Mica),
+    };
+    log_err("set theme", w.set_theme(mode));
+    let effects = match theme.backdrop.as_str() {
+        "acrylic" => Some(
+            EffectsBuilder::new()
+                .effect(Effect::Acrylic)
+                .color(Color(32, 32, 32, 96))
+                .build(),
+        ),
+        // The page paints its own color.
+        "solid" => None,
+        _ => Some(EffectsBuilder::new().effect(mica).build()),
+    };
+    log_err("set backdrop", w.set_effects(effects));
 }
 
 /// Moves the panel's hotkey after config.toml changed it.
@@ -272,6 +303,15 @@ pub fn run() {
         .manage(apps::AppIndex::default())
         .manage(focus::Focus::default())
         .manage(files::Files::default())
+        // The user's theme.css, and nothing else, for the panel's stylesheet link.
+        .register_uri_scheme_protocol("theme", |_ctx, _request| {
+            let response = tauri::http::Response::builder();
+            match std::fs::read(settings::css_path()) {
+                Ok(css) => response.header("Content-Type", "text/css").body(css),
+                Err(_) => response.status(404).body(Vec::new()),
+            }
+            .expect("static response parts are valid")
+        })
         .register_uri_scheme_protocol("icon", |_ctx, request| {
             let name = request.uri().path().trim_start_matches('/');
             let bytes = apps::is_icon_file(name)
@@ -318,6 +358,7 @@ pub fn run() {
             register_hotkey(app.handle(), &config.hotkey);
             apps::refresh(app.handle());
             build_tray(app)?;
+            apply_backdrop(app.handle());
             if !std::env::args().any(|a| a == HIDDEN_ARG) {
                 show(app.handle());
             }
@@ -370,13 +411,16 @@ mod tests {
     #[test]
     fn panel_is_centered_in_upper_part() {
         // 1920x1080 at 125% with a 60 px taskbar: the panel is 950x600.
-        assert_eq!(place((0, 0), (1920, 1020), 1.25), (485, 105, 950, 600));
+        assert_eq!(
+            place((0, 0), (1920, 1020), (760.0, 480.0), 1.25),
+            (485, 105, 950, 600)
+        );
     }
 
     #[test]
     fn panel_follows_offset_monitor_and_clamps() {
         assert_eq!(
-            place((-1280, 200), (1280, 400), 1.0),
+            place((-1280, 200), (1280, 400), (760.0, 480.0), 1.0),
             (-1020, 200, 760, 400)
         );
     }

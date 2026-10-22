@@ -34,7 +34,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data: http://icon.localhost http://thumb.localhost; style-src 'self'",
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data: http://icon.localhost http://thumb.localhost; style-src 'self' http://theme.localhost",
       "devCsp": null
     }
   },
