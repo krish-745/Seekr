@@ -26,3 +26,10 @@ file as it is first opened, outside Seekr.
 
 PDFs aren't read at all yet (no PDF text extraction is built), so malformed PDFs can't reach
 the extractor.
+
+## 7.2 Soak
+
+`scripts/soak.ps1` samples Seekr's processes (CPU time, working set, private memory, handles,
+threads), the GPU's power state and the battery every five minutes, to
+`%LOCALAPPDATA%\Seekr\soak`; `scripts/soak.ps1 -Report` summarizes a run. A 72-hour run started
+on 23 October 2026 at 01:57 with Seekr in normal use; its results go here when it ends.
