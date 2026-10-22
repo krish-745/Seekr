@@ -9,7 +9,7 @@ use fsindex::filter;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State, ipc::Channel};
 
-use crate::{apps, builtin, calc, clipboard, content, direct, files, rank::Ranker};
+use crate::{apps, builtin, calc, clipboard, clips, content, direct, files, rank::Ranker};
 
 #[derive(Clone, Serialize)]
 pub struct Action {
@@ -78,6 +78,22 @@ pub async fn query(
     ranker: State<'_, Ranker>,
 ) -> Result<(), String> {
     engine.begin(id);
+    // `clip …` lists clipboard history and nothing else.
+    if let Some(words) = clips::mode(&text) {
+        let items = clips::items(&app, words);
+        if engine.is_current(id) {
+            let chips = Vec::new();
+            on_batch
+                .send(Batch {
+                    id,
+                    source: "apps",
+                    items,
+                    chips,
+                })
+                .map_err(|e| e.to_string())?;
+        }
+        return Ok(());
+    }
     let parsed = filter::parse(&text);
     // File names take milliseconds across all cores, so they start first, run while apps are
     // ranked, and follow as a second batch.
@@ -174,6 +190,11 @@ pub fn run_action(
     ranker: State<'_, Ranker>,
 ) -> Result<(), String> {
     let owner = crate::panel_hwnd(&app).ok_or("panel window is gone")?;
+    // Clipboard entries pin, delete and paste themselves, and aren't recent results either.
+    if let Some(clip) = item.strip_prefix("clip:") {
+        tracing::info!("run {item} {action}");
+        return clips::run(&app, clip, &action);
+    }
     // A result is the user's own numbers: neither logged nor kept as a recent result.
     if let Some(result) = item.strip_prefix("calc:") {
         tracing::info!("run calc {action}");

@@ -23,6 +23,11 @@ const TOGGLE: Action = Action {
     id: "toggle",
     label: "Pause or resume",
 };
+/// The panel types `clip ` for this one; Rust never sees it.
+const HISTORY: Action = Action {
+    id: "cliphistory",
+    label: "Show",
+};
 /// The panel opens its folder picker for this one; Rust never sees it.
 const SETUP: Action = Action {
     id: "setup",
@@ -74,6 +79,15 @@ pub fn all() -> Vec<Item> {
             actions: vec![SETUP],
         },
         indexing(),
+        Item {
+            id: "seekr:clipboard".into(),
+            title: "Clipboard history".into(),
+            subtitle: "Type clip and a few words to search it".into(),
+            preview: "Seekr keeps what you copy (text, images and files) for 30 days or 1,000 entries; pinned entries stay until you unpin them. Copies a password manager marks as private are skipped. Enter pastes into the window you were in, Ctrl+Enter copies.".into(),
+            icon: None,
+            line: None,
+            actions: vec![HISTORY],
+        },
         Item {
             id: "seekr:quit".into(),
             title: "Quit Seekr".into(),

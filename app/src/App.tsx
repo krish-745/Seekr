@@ -15,6 +15,9 @@ import {
 } from "./results";
 import "./App.css";
 
+/** Actions that change an entry in place and leave the panel open. */
+const STAY_OPEN = new Set(["clippin", "clipunpin", "clipdelete"]);
+
 /** Row height in CSS px; must match `.row` in App.css. */
 const ROW = 44;
 
@@ -85,6 +88,11 @@ function App() {
     on(current, (item) => {
       setPreview(undefined);
       clearTimeout(previewTimer);
+      // A copied image is its own thumbnail.
+      if (item?.id.startsWith("clip:") && item.icon?.startsWith("http://thumb.localhost/")) {
+        setPreview({ kind: "image", url: item.icon });
+        return;
+      }
       if (!item?.id.startsWith("path:")) return;
       const dark = matchMedia("(prefers-color-scheme: dark)").matches;
       previewTimer = setTimeout(() => {
@@ -168,6 +176,11 @@ function App() {
       openSetup(false);
       return;
     }
+    if (actionId === "cliphistory") {
+      input.value = "clip ";
+      search(input.value);
+      return;
+    }
     if (actionId === "recycle" && confirming() !== item) {
       setActionsOpen(false);
       setConfirming(item);
@@ -177,6 +190,9 @@ function App() {
     if (actionId === "pin" || actionId === "unpin") {
       // Pinning keeps the panel open and re-ranks the current query.
       invoke("toggle_pin", { item: item.id }).then(() => search(input.value));
+    } else if (STAY_OPEN.has(actionId)) {
+      // Pinning or deleting a clipboard entry keeps the history on screen, refreshed.
+      invoke("run_action", { item: item.id, action: actionId, query: input.value }).then(() => search(input.value));
     } else {
       invoke("run_action", { item: item.id, action: actionId, query: input.value });
     }

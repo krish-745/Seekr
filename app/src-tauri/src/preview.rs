@@ -161,6 +161,13 @@ fn build(path: &str, dark: bool) -> Preview {
 }
 
 fn image(path: &str) -> Preview {
+    Preview::Image {
+        url: thumb_url(path),
+    }
+}
+
+/// The `thumb.localhost` URL that serves the shell's thumbnail of `path`.
+pub fn thumb_url(path: &str) -> String {
     let query: String = path
         .bytes()
         .map(|b| match b {
@@ -170,9 +177,7 @@ fn image(path: &str) -> Preview {
             _ => format!("%{b:02X}"),
         })
         .collect();
-    Preview::Image {
-        url: format!("http://thumb.localhost/?path={query}"),
-    }
+    format!("http://thumb.localhost/?path={query}")
 }
 
 /// The start of a text file, or None for binary content.
