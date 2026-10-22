@@ -1,13 +1,18 @@
-//! AI answers: `?question` asks the model about the user's files. The passages that match best
+//! AI answers. `?question` asks the model on this PC about the user's files; `??question` asks
+//! a cloud model anything, sending only the question (never a file).
+//!
+//! `?`:  The passages that match best
 //! (by words and meaning, about 3,000 tokens) go to the model numbered, the answer streams into
 //! the preview pane citing them, and follow-up questions keep the earlier passages first so the
 //! model's prompt cache still holds them.
 //!
 //! The model is Qwen3.5-4B in llama.cpp's server on the GPU by default (see
 //! docs/benchmarks/llm.md), started on the first question and stopped after ten idle minutes,
-//! which hands the GPU back. `ai = "gemini"` or `ai = "grok"` in config.toml sends questions and
-//! passages to that cloud API instead, with its key in the user's environment (GEMINI_API_KEY or
-//! XAI_API_KEY); `api_model` picks the model.
+//! which hands the GPU back.
+//!
+//! `??`: Gemini or Grok, through their OpenAI-style APIs, with the key in the user's environment
+//! (GEMINI_API_KEY or XAI_API_KEY). `api` in config.toml picks one when both are set, and
+//! `api_model` the model.
 
 use std::{
     io::{BufRead, BufReader},
@@ -59,6 +64,7 @@ const MODELS: &str = r"llm\models";
 const DEFAULT_MODEL: &str = "Qwen3.5-4B-Q4_K_M";
 
 /// A cloud API that speaks OpenAI's chat format.
+#[derive(Debug)]
 struct Api {
     /// Its name for `ai =` in config.toml.
     name: &'static str,
@@ -94,24 +100,13 @@ const SYSTEM: &str = "You answer questions about the user's own files. Use only 
     passages. Be brief and direct. Cite the passages you used after the sentence they support, \
     like [2]. If the passages don't answer the question, say you couldn't find it in their files.";
 
+const GENERAL: &str = "You are a helpful assistant inside a Windows launcher. Answer directly \
+    and briefly; use a short list or code block only when it helps.";
+
 const ASK: Action = Action {
     id: "ask",
     label: "Ask",
 };
-
-enum Provider {
-    Local { model: String },
-    Cloud { api: &'static Api, model: String },
-}
-
-impl Provider {
-    fn label(&self) -> String {
-        match self {
-            Self::Local { model } => format!("On this PC · {}", model.replace('-', " ")),
-            Self::Cloud { api, model } => format!("{} · {model}", api.label),
-        }
-    }
-}
 
 struct Server {
     child: Child,
@@ -140,81 +135,112 @@ struct Chat {
 }
 
 pub struct Ai {
-    provider: Provider,
+    /// The local model's file name, for questions about files.
+    model: String,
+    /// The cloud API for general questions, by name ("" for whichever has a key), and its model.
+    api: String,
+    api_model: String,
     server: Mutex<Option<Server>>,
     used: Mutex<Instant>,
     chat: Mutex<Chat>,
+    /// The general conversation: (role, content) after its system prompt.
+    general: Mutex<Vec<(String, String)>>,
     /// The question being answered; a newer number (another question, or Stop) ends it.
     asking: AtomicU64,
 }
 
 impl Ai {
     pub fn new(config: &common::Config) -> Self {
-        let cloud = APIS.iter().find(|a| a.name == config.ai);
-        if cloud.is_none() && config.ai != "local" {
+        if !config.api.is_empty() && !APIS.iter().any(|a| a.name == config.api) {
             tracing::warn!(
-                "ai = {:?} isn't known; using the model on this PC",
-                config.ai
+                "api = {:?} isn't known; using whichever key is set",
+                config.api
             );
         }
-        let provider = match cloud {
-            Some(api) => Provider::Cloud {
-                api,
-                model: if config.api_model.is_empty() {
-                    api.model.to_string()
-                } else {
-                    config.api_model.clone()
-                },
-            },
-            None => Provider::Local {
-                model: if config.ai_model.is_empty() {
-                    DEFAULT_MODEL.to_string()
-                } else {
-                    config.ai_model.clone()
-                },
-            },
-        };
         Self {
-            provider,
+            model: if config.ai_model.is_empty() {
+                DEFAULT_MODEL.to_string()
+            } else {
+                config.ai_model.clone()
+            },
+            api: config.api.clone(),
+            api_model: config.api_model.clone(),
             server: Mutex::new(None),
             used: Mutex::new(Instant::now()),
             chat: Mutex::default(),
+            general: Mutex::default(),
             asking: AtomicU64::new(0),
         }
     }
+
+    /// The cloud API for general questions, its model and key: the one config.toml names, or
+    /// else the first whose key is set. Keys are read at each question, so one set after Seekr
+    /// started works without a restart.
+    fn cloud(&self) -> Result<(&'static Api, String, String), String> {
+        let api = APIS
+            .iter()
+            .find(|a| a.name == self.api)
+            .or_else(|| APIS.iter().find(|a| user_env(a.key).is_some()))
+            .ok_or("set GEMINI_API_KEY or XAI_API_KEY in your environment for general questions")?;
+        let key = user_env(api.key)
+            .ok_or_else(|| format!("{} isn't set in your environment", api.key))?;
+        let model = if self.api_model.is_empty() {
+            api.model.to_string()
+        } else {
+            self.api_model.clone()
+        };
+        Ok((api, model, key))
+    }
 }
 
-/// `?question`.
-pub fn mode(text: &str) -> Option<&str> {
-    text.trim_start().strip_prefix('?').map(str::trim)
+/// `?question` (about the user's files) or `??question` (anything): whether it is general, and
+/// the question.
+pub fn mode(text: &str) -> Option<(bool, &str)> {
+    let text = text.trim_start();
+    if let Some(rest) = text.strip_prefix("??") {
+        return Some((true, rest.trim()));
+    }
+    text.strip_prefix('?').map(|rest| (false, rest.trim()))
 }
 
-pub fn items(app: &AppHandle, question: &str) -> Vec<Item> {
+pub fn items(app: &AppHandle, general: bool, question: &str) -> Vec<Item> {
     let Some(ai) = app.try_state::<Ai>() else {
         return Vec::new();
     };
-    let missing = match &ai.provider {
-        Provider::Local { model } => (!model_path(model).exists() || !runtime().exists())
-            .then(|| "The AI model isn't installed yet".to_string()),
-        Provider::Cloud { api, .. } => user_env(api.key).is_none().then(|| {
-            format!(
-                "Set {} in your environment to use the {}",
-                api.key, api.label
-            )
-        }),
-    };
-    let title = if question.is_empty() {
-        "Ask AI about your files".to_string()
+    let (title, subtitle, preview) = if general {
+        let subtitle = match ai.cloud() {
+            Ok((api, model, _)) => format!("{} · {model} · only your question is sent", api.label),
+            Err(e) => format!("To ask, {e}"),
+        };
+        let title = if question.is_empty() {
+            "Ask AI anything".to_string()
+        } else {
+            format!("Ask AI: {question}")
+        };
+        let preview = "General questions go to a cloud model: only what you type after ?? is \
+            sent, never your files. Ask a follow-up with ?? again; Esc stops an answer.";
+        (title, subtitle, preview)
     } else {
-        format!("Ask AI: {question}")
+        let subtitle = if model_path(&ai.model).exists() && runtime().exists() {
+            format!("Your files · on this PC · {}", ai.model.replace('-', " "))
+        } else {
+            "The AI model isn't installed yet".to_string()
+        };
+        let title = if question.is_empty() {
+            "Ask AI about your files".to_string()
+        } else {
+            format!("Ask your files: {question}")
+        };
+        let preview = "Answers come from the files content search reads, with the passages \
+            cited, from a model on this PC; nothing leaves it. Ask a follow-up the same way; Esc \
+            stops an answer. For anything else, start with ??.";
+        (title, subtitle, preview)
     };
     vec![Item {
         id: "ai:ask".into(),
         title,
-        subtitle: missing.unwrap_or_else(|| ai.provider.label()),
-        preview: "Answers come from the files content search reads, with the passages cited. \
-            Ask a follow-up the same way; Esc stops an answer."
-            .into(),
+        subtitle,
+        preview: preview.into(),
         icon: None,
         line: None,
         actions: vec![ASK],
@@ -253,13 +279,19 @@ pub enum AiEvent {
 pub async fn ask(
     app: AppHandle,
     question: String,
+    general: bool,
     follow_up: bool,
     on_event: Channel<AiEvent>,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let ai = app.state::<Ai>();
         let id = ai.asking.fetch_add(1, Ordering::SeqCst) + 1;
-        if let Err(e) = answer(&app, &ai, id, &question, follow_up, &on_event) {
+        let answered = if general {
+            answer_general(&ai, id, &question, follow_up, &on_event)
+        } else {
+            answer(&app, &ai, id, &question, follow_up, &on_event)
+        };
+        if let Err(e) = answered {
             tracing::warn!("AI answer failed: {e}");
             let _ = on_event.send(AiEvent::Error { text: e });
         }
@@ -367,34 +399,18 @@ fn answer(
                 .map(|(role, content)| json!({"role": role, "content": content})),
         )
         .collect();
-    let (url, key, mut body) = match &ai.provider {
-        Provider::Local { model } => {
-            let (port, key) = local_server(ai, model, &send)?;
-            let body = json!({
-                "chat_template_kwargs": {"enable_thinking": false},
-                "cache_prompt": true,
-            });
-            (
-                format!("http://127.0.0.1:{port}/v1/chat/completions"),
-                key,
-                body,
-            )
-        }
-        Provider::Cloud { api, model } => {
-            let key = user_env(api.key)
-                .ok_or_else(|| format!("{} isn't set in your environment", api.key))?;
-            let mut body = json!({"model": model});
-            if let Some((field, value)) = api.no_thinking {
-                body[field] = json!(value);
-            }
-            (api.url.to_string(), key, body)
-        }
-    };
+    // Questions about files only ever go to the model on this PC.
+    let (port, key) = local_server(ai, &ai.model, &send)?;
+    let mut body = json!({
+        "chat_template_kwargs": {"enable_thinking": false},
+        "cache_prompt": true,
+    });
     body["messages"] = Value::Array(messages);
     body["stream"] = json!(true);
     body["temperature"] = json!(0.2);
     body["max_tokens"] = json!(MAX_ANSWER_TOKENS);
-    let (text, first, total) = stream_reply(ai, id, &url, &key, body, &send)?;
+    let url = format!("http://127.0.0.1:{port}/v1/chat/completions");
+    let (text, first, total) = stream_reply(ai, id, &url, &key, body, None, &send)?;
     *ai.used.lock().unwrap() = Instant::now();
     ai.chat
         .lock()
@@ -408,14 +424,60 @@ fn answer(
     Ok(())
 }
 
+/// A general question for the cloud model: just the question and the conversation so far.
+fn answer_general(
+    ai: &Ai,
+    id: u64,
+    question: &str,
+    follow_up: bool,
+    events: &Channel<AiEvent>,
+) -> Result<(), String> {
+    let send = |e: AiEvent| {
+        let _ = events.send(e);
+    };
+    let (api, model, key) = ai.cloud()?;
+    let mut history = ai.general.lock().unwrap().clone();
+    if !follow_up {
+        history.clear();
+    }
+    history.push(("user".into(), question.to_string()));
+    let messages: Vec<Value> = std::iter::once(json!({"role": "system", "content": GENERAL}))
+        .chain(
+            history
+                .iter()
+                .map(|(r, c)| json!({"role": r, "content": c})),
+        )
+        .collect();
+    let mut body = json!({
+        "model": model,
+        "messages": messages,
+        "stream": true,
+        "temperature": 0.3,
+        "max_tokens": MAX_ANSWER_TOKENS * 2,
+    });
+    if let Some((field, value)) = api.no_thinking {
+        body[field] = json!(value);
+    }
+    let (text, first, total) = stream_reply(ai, id, api.url, &key, body, api.no_thinking, &send)?;
+    history.push(("assistant".into(), text));
+    *ai.general.lock().unwrap() = history;
+    send(AiEvent::Done {
+        seconds: total.as_secs_f64(),
+        first: first.as_secs_f64(),
+    });
+    Ok(())
+}
+
 /// Posts a chat request and passes on the answer as it streams: (answer, time to its first
 /// word, time in all). Stops early once question `id` is no longer the one being answered.
+/// `optional` names a field the API may refuse; the request is sent again without it.
 fn stream_reply(
     ai: &Ai,
     id: u64,
     url: &str,
     key: &str,
     mut body: Value,
+    optional: Option<(&str, &str)>,
     send: &impl Fn(AiEvent),
 ) -> Result<(String, Duration, Duration), String> {
     let start = Instant::now();
@@ -442,9 +504,8 @@ fn stream_reply(
     };
     let mut response = post(&body)?;
     // A model that can't turn thinking off refuses the field; it can still answer without it.
-    if let Provider::Cloud { api, .. } = &ai.provider
-        && response.status() == 400
-        && let Some((field, _)) = api.no_thinking
+    if response.status() == 400
+        && let Some((field, _)) = optional
         && let Some(fields) = body.as_object_mut()
     {
         fields.remove(field);
@@ -710,6 +771,7 @@ mod tests {
             &url,
             &key,
             body("Which keys open the Seekr panel?", 200),
+            None,
             &count,
         )
         .unwrap();
@@ -723,6 +785,7 @@ mod tests {
             &url,
             &key,
             body("How long is clipboard history kept?", 200),
+            None,
             &count,
         )
         .unwrap();
@@ -743,6 +806,7 @@ mod tests {
                 &url,
                 &key,
                 body("Write a 500-word essay about launchers.", 600),
+                None,
                 &count,
             )
         });
@@ -771,8 +835,27 @@ mod tests {
 
     #[test]
     fn question_mode() {
-        assert_eq!(mode("?what is due friday"), Some("what is due friday"));
-        assert_eq!(mode("  ? hi "), Some("hi"));
+        assert_eq!(
+            mode("?what is due friday"),
+            Some((false, "what is due friday"))
+        );
+        assert_eq!(mode("  ? hi "), Some((false, "hi")));
+        assert_eq!(mode("??capital of peru"), Some((true, "capital of peru")));
+        assert_eq!(mode("??"), Some((true, "")));
         assert_eq!(mode("what?"), None);
+    }
+
+    #[test]
+    fn general_questions_need_a_key_and_name_it() {
+        let ai = Ai::new(&common::Config {
+            api: "grok".into(),
+            ..Default::default()
+        });
+        if user_env("XAI_API_KEY").is_none() {
+            assert_eq!(
+                ai.cloud().unwrap_err(),
+                "XAI_API_KEY isn't set in your environment"
+            );
+        }
     }
 }

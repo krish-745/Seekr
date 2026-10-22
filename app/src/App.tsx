@@ -55,6 +55,8 @@ type AiEvent =
   | { kind: "error"; text: string };
 /** A conversation with the AI: questions and answers so far, and the passages it was given. */
 type Answer = {
+  /** A general (`??`) conversation with a cloud model, rather than one about the user's files. */
+  general: boolean;
   turns: { question: string; text: string }[];
   sources: Source[];
   busy: boolean;
@@ -227,7 +229,9 @@ function App() {
       return;
     }
     if (actionId === "ask") {
-      ask(input.value.trimStart().slice(1).trim());
+      const text = input.value.trimStart();
+      const general = text.startsWith("??");
+      ask(text.slice(general ? 2 : 1).trim(), general);
       return;
     }
     if (actionId === "askmode") {
@@ -272,11 +276,13 @@ function App() {
     }
   }
 
-  function ask(question: string) {
+  function ask(question: string, general: boolean) {
     const before = answer();
     if (!question || before?.busy) return;
-    const followUp = !!before && before.turns.length > 0 && !before.error;
+    // Switching between ? and ?? starts a new conversation.
+    const followUp = !!before && before.turns.length > 0 && !before.error && before.general === general;
     setAnswer({
+      general,
       turns: [...(followUp ? before.turns : []), { question, text: "" }],
       sources: followUp ? before.sources : [],
       busy: true,
@@ -296,7 +302,7 @@ function App() {
         setAnswer({ ...a, busy: false, status: undefined, took: `${e.first.toFixed(1)} s to start, ${e.seconds.toFixed(1)} s in all` });
       else setAnswer({ ...a, busy: false, status: undefined, error: e.text });
     };
-    invoke("ask", { question, followUp, onEvent });
+    invoke("ask", { question, general, followUp, onEvent });
   }
 
   function openSource(n: number) {

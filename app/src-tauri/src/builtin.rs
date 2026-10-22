@@ -65,11 +65,11 @@ const CONFIG_TEMPLATE: &str = "\
 # The web shortcut for \"Search the web\": g, ddg, b, or one of yours.
 # search = \"ddg\"
 #
-# AI answers: \"local\" (the model on this PC), \"gemini\" (needs GEMINI_API_KEY in your
-# environment) or \"grok\" (needs XAI_API_KEY). ai_model picks the local model, api_model the
-# cloud one.
-# ai = \"local\"
+# AI: ? asks about your files with the model on this PC (ai_model picks it); ?? asks a cloud
+# model anything, sending only the question. ?? needs GEMINI_API_KEY or XAI_API_KEY in your
+# environment; api picks one when both are set, api_model its model.
 # ai_model = \"Qwen3.5-9B-IQ4_XS\"
+# api = \"gemini\"
 # api_model = \"gemini-2.5-flash\"
 #
 # Web shortcuts: type the key, a space and your words. %s is where the words go.
@@ -120,8 +120,8 @@ pub fn all() -> Vec<Item> {
         Item {
             id: "seekr:ask".into(),
             title: "Ask AI".into(),
-            subtitle: "Type ? and a question about your files".into(),
-            preview: "Answers questions from the files content search reads, citing the passages it used. The model runs on this PC (or the Gemini or Grok API, if config.toml says so), starts on the first question and stops after ten idle minutes.".into(),
+            subtitle: "? asks about your files, ?? asks anything".into(),
+            preview: "? answers from the files content search reads, citing the passages it used, with a model on this PC that starts on the first question and stops after ten idle minutes. ?? answers anything with a cloud model (Gemini or Grok, once its key is in your environment), sending only your question.".into(),
             icon: None,
             line: None,
             actions: vec![ASK_MODE],

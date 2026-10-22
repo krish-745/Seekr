@@ -79,18 +79,18 @@ Type `:` and a word: `:fire`, `:laugh`, `:indian rupee`, `:double arrow`, `:gree
 
 ## Ask AI
 
-Type `?` and a question about your files, such as `?when is the rent due`. The answer cites the passages it used; click a number to open that file. Ask a follow-up the same way, and press Esc to stop an answer. The model runs on your GPU and stops after ten idle minutes.
+- `?` and a question asks about **your files**: `?when is the rent due`. The answer cites the passages it used; click a number to open that file. A model on your GPU answers, so nothing leaves your PC; it stops after ten idle minutes.
+- `??` and a question asks **anything**: `??explain big-O notation`. A cloud model answers, and only what you type after `??` is sent, never your files.
 
-To use a cloud model instead, set its key in your own environment (never in a file you share) and name it in `%APPDATA%\Seekr\config.toml`:
+Follow up with another `?` (or `??`) question; Esc stops an answer.
+
+`??` needs a Gemini or Grok key in your own environment (never in a file you share):
 
 ```powershell
 [Environment]::SetEnvironmentVariable('GEMINI_API_KEY', 'your-key', 'User')   # or XAI_API_KEY for Grok
 ```
 
-```toml
-ai = "gemini"          # or "grok"
-# api_model = "gemini-2.5-flash"
-```
+With both set, `api = "grok"` in `%APPDATA%\Seekr\config.toml` picks Grok; `api_model` picks the model.
 
 ## Develop
 

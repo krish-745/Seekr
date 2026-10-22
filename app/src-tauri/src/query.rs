@@ -107,7 +107,7 @@ pub async fn query(
                 .map_err(|e| e.to_string())?
             }
             None => match (glyphs, note, todo) {
-                _ if question.is_some() => ai::items(&app, question.unwrap_or("")),
+                _ if let Some((general, words)) = question => ai::items(&app, general, words),
                 (Some(words), ..) => emoji::items(words),
                 (_, Some(words), _) => notes::note_items(words),
                 (.., Some(words)) => notes::todo_items(words),
