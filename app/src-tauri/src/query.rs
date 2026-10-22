@@ -9,7 +9,7 @@ use fsindex::filter;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State, ipc::Channel};
 
-use crate::{apps, builtin, content, direct, files, rank::Ranker};
+use crate::{apps, builtin, calc, clipboard, content, direct, files, rank::Ranker};
 
 #[derive(Clone, Serialize)]
 pub struct Action {
@@ -89,8 +89,12 @@ pub async fn query(
             !engine.is_current(id)
         })
     });
-    // A typed path or URL is what the user meant, so it leads, unranked.
-    let mut items = direct::items(&text);
+    // A calculation, typed path or URL is what the user meant, so it leads, unranked.
+    let mut items = Vec::new();
+    if parsed.filter.is_empty() {
+        items.extend(calc::items(&text));
+    }
+    items.extend(direct::items(&text));
     // Apps and Seekr's own commands are fast, so they are ranked together into the first batch;
     // slower providers append later batches. File filters mean the user wants files.
     if parsed.filter.is_empty() {
@@ -169,11 +173,18 @@ pub fn run_action(
     query: String,
     ranker: State<'_, Ranker>,
 ) -> Result<(), String> {
+    let owner = crate::panel_hwnd(&app).ok_or("panel window is gone")?;
+    // A result is the user's own numbers: neither logged nor kept as a recent result.
+    if let Some(result) = item.strip_prefix("calc:") {
+        tracing::info!("run calc {action}");
+        clipboard::set_text(owner, result)?;
+        crate::hide_panel(&app, true);
+        return Ok(());
+    }
     tracing::info!("run {item} {action}");
     if let Err(e) = ranker.record(&query, &item) {
         tracing::error!("could not record use of {item}: {e}");
     }
-    let owner = crate::panel_hwnd(&app).ok_or("panel window is gone")?;
     match item.split_once(':') {
         Some(("app", id)) => apps::run(&app, id, &action, owner)?,
         Some(("path" | "url", _)) => direct::run(&app, &item, &action, owner)?,

@@ -34,3 +34,7 @@ webview2-com = "0.39"
 pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 tantivy = "0.27.0"
 syntect = { version = "5.3.0", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
+fend-core = "1.5.9"
+chrono-tz = "0.10.4"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+ureq = { version = "3.5.0", default-features = false, features = ["native-tls-no-default"] }

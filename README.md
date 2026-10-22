@@ -32,6 +32,18 @@ File names match fuzzily from the second character. Add filters anywhere in the 
 | `"…"` | `"read me"` | names containing exactly that text |
 | `-` | `-draft` | names not containing that text |
 
+## Calculator
+
+Type a calculation and its result comes first; Enter copies it.
+
+| Type | Examples |
+|---|---|
+| Math, units, bases | `125*48+7`, `sqrt(2)*10`, `5 km to miles`, `255 to hex`, `0xff to decimal` |
+| Percentages | `150 + 18%`, `80 - 25%`, `20% of 150` |
+| Currency (ECB daily rates, rupees by default) | `10 usd`, `$10`, `250 gbp to eur`, `₹500 to usd` |
+| Time zones | `time in tokyo`, `london time`, `3pm ist to pst`, `9am in new york` |
+| Dates | `today + 30 days`, `10 days ago`, `days until 25 dec`, `2026-12-25 - today`, `dec 25` |
+
 ## Develop
 
 Requirements: Windows 11, Rust (stable, MSVC), Visual Studio Build Tools with the C++ workload, Node.js 20+.

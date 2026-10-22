@@ -1,5 +1,6 @@
 mod apps;
 mod builtin;
+mod calc;
 mod clipboard;
 mod content;
 mod direct;
@@ -11,6 +12,7 @@ mod indexer;
 mod preview;
 mod query;
 mod rank;
+mod rates;
 mod telemetry;
 
 use tauri::{
