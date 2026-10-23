@@ -69,6 +69,8 @@ beforeAll(() => {
     },
     matchMedia: () => ({ matches: false }),
   });
+  // jsdom has no layout, so nothing to scroll.
+  Element.prototype.scrollIntoView = () => {};
 });
 
 let dispose = () => {};
