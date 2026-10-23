@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Windows installer (`scripts/package.ps1`, NSIS through Tauri with `tauri.nsis.json`): per user in `%LOCALAPPDATA%\Programs\Seekr` (a copy of Tauri 2.12.3's template with only that folder changed, as its default was Seekr's data folder), with the content indexer, DirectML.dll, the privacy note and third-party notices; it starts Seekr hidden at login, sets the power-saving GPU, and installs the SeekrIndex service with one UAC prompt, only when the service is missing or changed (`seekr-svc current` checks without administrator rights). Uninstalling removes the service, the login entry and the GPU setting, and keeps your data.
 - The meaning-search model can be downloaded from the app: saving content folders while it is missing opens a download screen (the same one, checks and cancel as the local AI's, now with named packs `ai` and `meaning`), and once it is in, a full indexing pass gives files already indexed their meaning vectors. `install.ps1` still fetches it as before.
 - README screenshots from the real app (`app/e2e/screenshots.mjs`, run through `scripts/smoke.ps1 -Script`), with the web tool off so no bookmarks or history appear. The smoke test now writes its config without a byte-order mark.
 - The settings list and the folder picker scroll to keep the selected entry in sight as the arrow keys move it; before, the selection could move below the bottom of the panel.

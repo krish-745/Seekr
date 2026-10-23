@@ -1,0 +1,20 @@
+{
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "resources": {
+      "../../target/release/seekr-indexer.exe": "seekr-indexer.exe",
+      "../../target/release/seekr-svc.exe": "seekr-svc.exe",
+      "../../target/release/DirectML.dll": "DirectML.dll",
+      "../../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md",
+      "../../PRIVACY.md": "PRIVACY.md"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "template": "windows/installer.nsi",
+        "installerHooks": "windows/hooks.nsh"
+      }
+    }
+  }
+}

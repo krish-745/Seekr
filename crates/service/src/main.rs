@@ -34,8 +34,9 @@ fn main() -> ExitCode {
     let result = match std::env::args().nth(1).as_deref() {
         Some("install") => install(),
         Some("uninstall") => uninstall(),
+        Some("current") => current(),
         Some("run") => service_dispatcher::start(NAME, ffi_service_main).map_err(Into::into),
-        _ => Err("usage: seekr-svc install | uninstall (as administrator)".into()),
+        _ => Err("usage: seekr-svc install | uninstall (as administrator) | current".into()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -164,6 +165,21 @@ fn install() -> Result<(), Box<dyn Error>> {
     service.set_description(DESCRIPTION)?;
     service.start::<&str>(&[])?;
     println!("installed {} and started {NAME}", dest.display());
+    Ok(())
+}
+
+/// Succeeds when the service is running from a copy identical to this exe, so an installer
+/// (which runs without administrator rights) asks for them only when there is something to do.
+fn current() -> Result<(), Box<dyn Error>> {
+    let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
+    let service = manager.open_service(NAME, ServiceAccess::QUERY_STATUS)?;
+    if service.query_status()?.current_state != ServiceState::Running {
+        return Err(format!("{NAME} isn't running").into());
+    }
+    let installed = std::fs::read(install_dir().join("seekr-svc.exe"))?;
+    if installed != std::fs::read(std::env::current_exe()?)? {
+        return Err(format!("{NAME} runs another version").into());
+    }
     Ok(())
 }
 
