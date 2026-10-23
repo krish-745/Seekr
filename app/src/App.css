@@ -12,6 +12,7 @@
   --accent: #005fb8;
   --border: rgb(0 0 0 / 0.08);
   --selection: rgb(0 0 0 / 0.06);
+  --hover: rgb(0 0 0 / 0.035);
   --surface: rgb(255 255 255 / 0.7);
   /* The panel's color with the solid backdrop. */
   --solid: #f3f3f3;
@@ -28,8 +29,9 @@
     --accent: #60cdff;
     --border: rgb(255 255 255 / 0.08);
     --selection: rgb(255 255 255 / 0.08);
+    --hover: rgb(255 255 255 / 0.045);
     --surface: rgb(40 40 40 / 0.95);
-  --solid: #202020;
+    --solid: #202020;
     --danger: #ff99a4;
   }
 }
@@ -41,6 +43,7 @@
   --accent: #60cdff;
   --border: rgb(255 255 255 / 0.08);
   --selection: rgb(255 255 255 / 0.08);
+  --hover: rgb(255 255 255 / 0.045);
   --surface: rgb(40 40 40 / 0.95);
   --solid: #202020;
   --danger: #ff99a4;
@@ -76,7 +79,7 @@
   }
 }
 
-/* Nothing in Seekr moves, and a theme.css that adds motion is held still too. */
+/* The actions menu stops easing in, and a theme.css that adds motion is held still too. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -177,6 +180,15 @@ body {
   cursor: default;
 }
 
+/* Under the pointer, a fainter fill than the selection; a press shows at once. */
+.row:hover,
+.actions li:hover,
+.folders li:hover {
+  background: var(--hover);
+}
+
+.actions li:active,
+.folders li:active,
 .row.selected,
 .actions li.selected {
   background: var(--selection);
@@ -335,9 +347,29 @@ body {
   padding: 6px;
   list-style: none;
   background: var(--surface);
+  /* Acrylic, like Windows' own menus: the results under it blur rather than show through. */
+  backdrop-filter: blur(30px) saturate(150%);
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+  transform-origin: bottom right;
+  animation: menu-in 120ms ease-out;
+}
+
+/* The menu grows from the corner it's anchored to. */
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+/* Windows' "Transparency effects" turned off. */
+@media (prefers-reduced-transparency: reduce) {
+  .actions {
+    background: var(--solid);
+    backdrop-filter: none;
+  }
 }
 
 .actions li {
@@ -416,7 +448,7 @@ kbd {
 
 .setup .error,
 .hints .error {
-  color: #e5534b;
+  color: var(--danger);
 }
 
 .diagnostics h3 {
@@ -561,5 +593,5 @@ kbd {
 }
 
 .answer .error {
-  color: #e5534b;
+  color: var(--danger);
 }

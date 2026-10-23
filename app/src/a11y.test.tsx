@@ -116,6 +116,12 @@ test("results, actions and settings can be followed by a screen reader", async (
   await frames();
   expect(input.getAttribute("aria-activedescendant")).toBe("row-1");
   expect(document.getElementById("row-1")?.getAttribute("aria-posinset")).toBe("2");
+  // A mouse press selects at once and leaves the focus in the query.
+  const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+  document.getElementById("row-2")!.dispatchEvent(press);
+  await frames();
+  expect(press.defaultPrevented).toBe(true);
+  expect(input.getAttribute("aria-activedescendant")).toBe("row-2");
   expect(await problems()).toEqual([]);
 
   key("Tab");

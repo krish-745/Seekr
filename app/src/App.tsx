@@ -997,7 +997,11 @@ function App() {
                   aria-description={items()[i]?.subtitle}
                   classList={{ selected: i === selected() }}
                   style={{ top: `${i * row()}px` }}
-                  onClick={() => select(i)}
+                  // Selects on the press, not the release, and keeps typing in the query.
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    select(i);
+                  }}
                   onDblClick={() => run(items()[i], items()[i]?.actions[0]?.id)}
                 >
                   <Show when={items()[i]?.icon} fallback={<span class="icon" />}>
@@ -1162,6 +1166,7 @@ function App() {
                   role="option"
                   aria-selected={i() === actionIndex()}
                   classList={{ selected: i() === actionIndex() }}
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={() => run(current(), action.id)}
                 >
                   {action.label}
