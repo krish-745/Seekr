@@ -6,6 +6,7 @@ import { render } from "solid-js/web";
 import { afterAll, beforeAll, expect, test } from "vitest";
 
 const callbacks: Record<number, (message: unknown) => void> = {};
+let scrolledTo = "";
 let next = 1;
 const item = (n: number, title: string, subtitle: string, actions = [{ id: "open", label: "Open" }]) => ({
   id: `app:${n}`,
@@ -69,8 +70,10 @@ beforeAll(() => {
     },
     matchMedia: () => ({ matches: false }),
   });
-  // jsdom has no layout, so nothing to scroll.
-  Element.prototype.scrollIntoView = () => {};
+  // jsdom has no layout, so nothing scrolls; record what would have been brought into view.
+  Element.prototype.scrollIntoView = function (this: Element) {
+    scrolledTo = this.id;
+  };
 });
 
 let dispose = () => {};
@@ -121,6 +124,7 @@ test("results, actions and settings can be followed by a screen reader", async (
   key("ArrowDown");
   await frames();
   expect(list.getAttribute("aria-activedescendant")).toBe("setting-1");
+  expect(scrolledTo).toBe("setting-1");
   expect(document.getElementById("setting-1")?.getAttribute("aria-description")).toBe("Tools");
   expect(await problems()).toEqual([]);
 });

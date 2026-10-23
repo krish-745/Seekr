@@ -355,6 +355,12 @@ function App() {
     const p = preview();
     return p?.kind === kind ? (p as Extract<Preview, { kind: K }>) : undefined;
   };
+  // The selected setting or folder stays in sight as the arrow keys move it.
+  createEffect(() => {
+    const s = settingsState();
+    const id = s ? `setting-${s.index}` : setup() ? `folder-${setupIndex()}` : undefined;
+    if (id) requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ block: "nearest" }));
+  });
   let previewTimer = 0;
   // Files and folders get a content preview, asked for once the selection settles.
   createEffect(
@@ -762,7 +768,6 @@ function App() {
                       aria-selected={i() === s().index}
                       aria-description={[f.group, f.hint].filter(Boolean).join(". ")}
                       classList={{ selected: i() === s().index }}
-                      ref={(el) => i() === s().index && requestAnimationFrame(() => el.scrollIntoView({ block: "nearest" }))}
                       onClick={() => setSettingsState({ ...s(), index: i(), draft: undefined })}
                       onDblClick={activateSetting}
                     >
