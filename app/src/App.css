@@ -13,6 +13,9 @@
   --border: rgb(0 0 0 / 0.08);
   --selection: rgb(0 0 0 / 0.06);
   --hover: rgb(0 0 0 / 0.035);
+  --layer: rgb(255 255 255 / 0.6);
+  --key: rgb(255 255 255 / 0.8);
+  --on-accent: #fff;
   --surface: rgb(255 255 255 / 0.7);
   /* The panel's color with the solid backdrop. */
   --solid: #f3f3f3;
@@ -30,6 +33,9 @@
     --border: rgb(255 255 255 / 0.08);
     --selection: rgb(255 255 255 / 0.08);
     --hover: rgb(255 255 255 / 0.045);
+    --layer: rgb(255 255 255 / 0.04);
+    --key: rgb(255 255 255 / 0.07);
+    --on-accent: #000;
     --surface: rgb(40 40 40 / 0.95);
     --solid: #202020;
     --danger: #ff99a4;
@@ -44,6 +50,9 @@
   --border: rgb(255 255 255 / 0.08);
   --selection: rgb(255 255 255 / 0.08);
   --hover: rgb(255 255 255 / 0.045);
+  --layer: rgb(255 255 255 / 0.04);
+  --key: rgb(255 255 255 / 0.07);
+  --on-accent: #000;
   --surface: rgb(40 40 40 / 0.95);
   --solid: #202020;
   --danger: #ff99a4;
@@ -112,12 +121,33 @@ body {
   flex-direction: column;
 }
 
+/* Windows' own icon font, for the search glyph and the icons that stand in for missing ones. */
+.glyph,
+.icon.tile {
+  font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets";
+  font-style: normal;
+  line-height: 1;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.bar .glyph {
+  font-size: 16px;
+  color: var(--text-muted);
+}
+
 .query {
   all: unset;
-  padding: 16px 20px;
+  flex: 1;
+  padding: 17px 0;
   font-size: 20px;
   caret-color: var(--accent);
-  border-bottom: 1px solid var(--border);
 }
 
 .query::placeholder {
@@ -158,7 +188,40 @@ body {
   position: relative;
   flex: 0 0 45%;
   overflow-y: auto;
-  border-right: 1px solid var(--border);
+}
+
+/* Nothing to show: the results take the whole width for the message. */
+.body.alone .results {
+  flex: 1;
+}
+
+.body.alone .preview {
+  display: none;
+}
+
+/* A thin thumb with no arrows, as in Windows 11's own lists. */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-button {
+  display: none;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 4px solid transparent;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text) 30%, transparent) padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  border-width: 3px;
 }
 
 .rows {
@@ -194,17 +257,47 @@ body {
   background: var(--selection);
 }
 
-.icon {
-  flex: none;
-  width: 24px;
-  height: 24px;
+/* Windows 11's selection mark: a short accent bar at the selected row's left edge. */
+.row.selected::before,
+.folders li.selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 3px;
+  height: 16px;
+  margin-top: -8px;
+  border-radius: 2px;
+  background: var(--accent);
 }
 
-.preview-icon {
-  display: block;
+.icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  font-size: 19px;
+  object-fit: contain;
+}
+
+/* An accent-tinted tile behind a glyph, so results without an icon still line up with apps. */
+.icon.tile {
+  font-size: 13px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.icon.large {
   width: 48px;
   height: 48px;
-  margin-bottom: 12px;
+  border-radius: 10px;
+  font-size: 40px;
+}
+
+.icon.large.tile {
+  font-size: 24px;
 }
 
 .text {
@@ -225,28 +318,67 @@ body {
   color: var(--text-muted);
 }
 
-.number {
-  font-size: 11px;
+.row kbd.number {
+  padding: 0;
+  border: none;
+  background: none;
   color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.row.selected kbd.number {
+  opacity: 1;
 }
 
 .empty {
-  padding: 16px 20px;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 20px;
   color: var(--text-muted);
+  text-align: center;
 }
 
+.empty .glyph {
+  font-size: 32px;
+  opacity: 0.5;
+}
+
+/* The preview is a card raised off the backdrop, as Windows 11 Settings groups its content. */
 .preview {
   flex: 1;
   min-width: 0;
-  padding: 16px 20px;
+  margin: 8px 8px 8px 0;
+  padding: 20px;
   overflow-y: auto;
   user-select: text;
+  background: var(--layer);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.hero {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.hero .text {
+  min-width: 0;
 }
 
 .preview h2 {
-  margin: 0 0 4px;
-  font-size: 16px;
+  margin: 0 0 2px;
+  font-size: 20px;
   font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .preview pre {
@@ -340,8 +472,8 @@ body {
 
 .actions {
   position: absolute;
-  right: 12px;
-  bottom: 8px;
+  right: 16px;
+  bottom: 16px;
   min-width: 200px;
   margin: 0;
   padding: 6px;
@@ -379,15 +511,30 @@ body {
 
 .hints {
   display: flex;
-  gap: 16px;
-  padding: 8px 20px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 18px;
+  padding: 9px 20px;
   font-size: 12px;
   color: var(--text-muted);
   border-top: 1px solid var(--border);
 }
 
+/* Keys drawn as keycaps: a raised face with a slightly heavier bottom edge. */
 kbd {
+  display: inline-block;
+  min-width: 12px;
+  margin-right: 2px;
+  padding: 0 5px;
   font: inherit;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  color: var(--text);
+  background: var(--key);
+  border: 1px solid var(--border);
+  border-bottom-color: color-mix(in srgb, var(--text) 20%, transparent);
+  border-radius: 4px;
 }
 
 .confirm {
@@ -408,8 +555,9 @@ kbd {
 
 .setup h2 {
   margin: 0 0 6px;
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 600;
+  line-height: 1.25;
 }
 
 .folders {
@@ -419,10 +567,11 @@ kbd {
 }
 
 .folders li {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px;
+  padding: 8px 12px;
   border-radius: 6px;
 }
 
@@ -503,12 +652,35 @@ kbd {
 }
 
 .fields li.group {
-  padding: 12px 10px 4px;
-  color: var(--text-muted);
-  font-size: 12px;
+  padding: 18px 12px 6px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+}
+
+.fields .value {
+  margin-left: auto;
+  color: var(--text-muted);
+}
+
+/* On and Off drawn as Windows 11's toggle switch, beside the word. */
+.fields .value.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.fields .value.toggle::after {
+  content: "";
+  box-sizing: border-box;
+  width: 40px;
+  height: 20px;
+  border: 1px solid var(--text-muted);
+  border-radius: 10px;
+  background: radial-gradient(circle at 9px 50%, var(--text-muted) 5px, transparent 5.5px);
+}
+
+.fields .value.toggle.on::after {
+  border-color: var(--accent);
+  background: radial-gradient(circle at 29px 50%, var(--on-accent) 6px, transparent 6.5px) var(--accent);
 }
 
 .fields .hint {

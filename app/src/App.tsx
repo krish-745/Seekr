@@ -6,6 +6,8 @@ import {
   firstVisible,
   marks,
   scrollFor,
+  standIn,
+  titleOf,
   visibleRange,
   type Batch,
   type Chip,
@@ -132,6 +134,17 @@ const fileName = (path: string) => path.slice(path.lastIndexOf("\\") + 1);
 
 /** Row heights in CSS px, comfortable and compact; App.css reads the one in use from --row. */
 const ROWS = { comfortable: 44, compact: 34 };
+
+/** An item's icon, or a tile with what stands in for it; `size` is "small" or "large". */
+function icon(item: Item | undefined, size: string) {
+  if (item?.icon) return <img class={`icon ${size}`} src={item.icon} alt="" />;
+  const shown = item && standIn(item);
+  return (
+    <span class={`icon ${size}`} classList={{ tile: !!shown && "glyph" in shown }} aria-hidden="true">
+      {shown && ("glyph" in shown ? shown.glyph : shown.emoji)}
+    </span>
+  );
+}
 
 /** Whether the panel is dark: the theme's mode, or Windows' when it follows the system. */
 const isDark = () => {
@@ -781,7 +794,7 @@ function App() {
                       <Show
                         when={i() === s().index && s().draft !== undefined}
                         fallback={
-                          <span class="size">
+                          <span class="value" classList={{ toggle: f.kind === "toggle", on: f.kind === "toggle" && !!f.value }}>
                             {f.kind === "toggle"
                               ? f.value
                                 ? "On"
@@ -947,23 +960,27 @@ function App() {
           </section>
         )}
       </Show>
-      <input
-        ref={input}
-        classList={{ hidden: covered() }}
-        class="query"
-        role="combobox"
-        aria-label="Search"
-        aria-expanded={items().length > 0}
-        aria-controls="results"
-        aria-autocomplete="list"
-        aria-activedescendant={
-          actionsOpen() ? `action-${actionIndex()}` : items().length ? `row-${selected()}` : undefined
-        }
-        placeholder="Search apps, files and more"
-        spellcheck={false}
-        autofocus
-        onInput={(e) => search(e.currentTarget.value)}
-      />
+      <div class="bar" classList={{ hidden: covered() }}>
+        <span class="glyph" aria-hidden="true">
+          {"\uE721"}
+        </span>
+        <input
+          ref={input}
+          class="query"
+          role="combobox"
+          aria-label="Search"
+          aria-expanded={items().length > 0}
+          aria-controls="results"
+          aria-autocomplete="list"
+          aria-activedescendant={
+            actionsOpen() ? `action-${actionIndex()}` : items().length ? `row-${selected()}` : undefined
+          }
+          placeholder="Search apps, files and more"
+          spellcheck={false}
+          autofocus
+          onInput={(e) => search(e.currentTarget.value)}
+        />
+      </div>
       <Show when={!covered() && chips().length > 0}>
         <div class="chips">
           <For each={chips()}>
@@ -975,7 +992,7 @@ function App() {
           </For>
         </div>
       </Show>
-      <div class="body" classList={{ hidden: covered() }}>
+      <div class="body" classList={{ hidden: covered(), alone: items().length === 0 && !answer() && !editing() }}>
         <div
           class="results"
           id="results"
@@ -1004,11 +1021,9 @@ function App() {
                   }}
                   onDblClick={() => run(items()[i], items()[i]?.actions[0]?.id)}
                 >
-                  <Show when={items()[i]?.icon} fallback={<span class="icon" />}>
-                    {(src) => <img class="icon" src={src()} alt="" />}
-                  </Show>
+                  {icon(items()[i], "small")}
                   <div class="text">
-                    <div class="title">{items()[i]?.title}</div>
+                    <div class="title">{items()[i] && titleOf(items()[i])}</div>
                     <div class="subtitle">{items()[i]?.subtitle}</div>
                   </div>
                   <kbd class="number" aria-hidden="true">
@@ -1020,7 +1035,10 @@ function App() {
           </div>
           <Show when={items().length === 0}>
             <div class="empty" role="status">
-              {query().trim() ? "No results" : "Type to search apps"}
+              <span class="glyph" aria-hidden="true">
+                {"\uE721"}
+              </span>
+              {query().trim() ? `No results for "${query().trim()}"` : "Type to search apps, files and settings"}
             </div>
           </Show>
         </div>
@@ -1089,9 +1107,13 @@ function App() {
           <Show when={!editing() && !answer() && current()}>
             {(item) => (
               <>
-                <Show when={item().icon}>{(src) => <img class="preview-icon" src={src()} alt="" />}</Show>
-                <h2>{item().title}</h2>
-                <p class="subtitle">{item().subtitle}</p>
+                <header class="hero">
+                  {icon(item(), "large")}
+                  <div class="text">
+                    <h2>{titleOf(item())}</h2>
+                    <p class="subtitle">{item().subtitle}</p>
+                  </div>
+                </header>
                 <Switch fallback={<pre>{item().preview}</pre>}>
                   <Match when={previewOf("image")}>
                     {(p) => <img class="thumb" src={p().url} alt="" onError={() => setPreview({ kind: "nothing" })} />}

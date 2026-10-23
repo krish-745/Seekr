@@ -89,3 +89,48 @@ export function scrollFor(
 export function firstVisible(scrollTop: number, rowHeight: number): number {
   return Math.ceil(scrollTop / rowHeight);
 }
+
+// Segoe Fluent Icons glyphs, by item id and then by the id's kind.
+const GLYPHS: Record<string, string> = {
+  "seekr:settings": "\uE713",
+  "seekr:config": "\uE8A5",
+  "seekr:logs": "\uE9F9",
+  "seekr:content": "\uE8B7",
+  "seekr:ask": "\uE8F2",
+  "seekr:notes": "\uE70B",
+  "seekr:todos": "\uE9D5",
+  "seekr:emoji": "\uE76E",
+  "seekr:windows": "\uE7C4",
+  "seekr:clipboard": "\uE77F",
+  "seekr:quit": "\uE7E8",
+  seekr: "\uE721",
+  app: "\uE71D",
+  calc: "\uE8EF",
+  setting: "\uE713",
+  sys: "\uE770",
+  url: "\uE774",
+  clip: "\uE77F",
+  todo: "\uE9D5",
+  note: "\uE70B",
+  ai: "\uE8F2",
+  win: "\uE7C4",
+};
+
+/**
+ * What stands in for an item's missing icon: an emoji itself, or a glyph for its kind. Files
+ * tell notes ("Edit here") and files ("Open with…") from folders by their actions.
+ */
+export function standIn(item: Item): { emoji: string } | { glyph: string } {
+  const kind = item.id.slice(0, item.id.indexOf(":"));
+  if (kind === "emoji") return { emoji: item.id.slice(6) };
+  if (kind === "path") {
+    const has = (id: string) => item.actions.some((a) => a.id === id);
+    return { glyph: has("editnote") ? GLYPHS.note : has("openwith") ? "\uE8A5" : "\uE8B7" };
+  }
+  return { glyph: GLYPHS[item.id] ?? GLYPHS[kind] ?? GLYPHS.seekr };
+}
+
+/** The title without the emoji an emoji result starts with, which its icon shows. */
+export function titleOf(item: Item): string {
+  return item.id.startsWith("emoji:") ? item.title.slice(item.id.length - 6).trim() : item.title;
+}

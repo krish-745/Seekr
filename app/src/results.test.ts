@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyBatches, firstVisible, marks, scrollFor, visibleRange, type Item } from "./results";
+import { applyBatches, firstVisible, marks, scrollFor, standIn, titleOf, visibleRange, type Item } from "./results";
 
 const item = (id: string): Item => ({ id, title: id, subtitle: "", preview: "", icon: null, actions: [] });
 
@@ -57,5 +57,21 @@ describe("marks", () => {
     ]);
     expect(marks("a+b (x)", "(x)")).toEqual([{ text: "a+b ", hit: false }, { text: "(x)", hit: true }]);
     expect(marks("plain", "")).toEqual([{ text: "plain", hit: false }]);
+  });
+});
+
+describe("standIn", () => {
+  const acts = (...ids: string[]) => ids.map((id) => ({ id, label: id }));
+  it("shows an emoji itself, and a glyph by id, kind, or a file's actions", () => {
+    const fire = { ...item("emoji:\u{1F525}"), title: "\u{1F525}   fire" };
+    expect(standIn(fire)).toEqual({ emoji: "\u{1F525}" });
+    expect(titleOf(fire)).toBe("fire");
+    expect(titleOf(item("app:1"))).toBe("app:1");
+    expect(standIn(item("seekr:quit"))).toEqual({ glyph: "\uE7E8" });
+    expect(standIn(item("seekr:indexing"))).toEqual({ glyph: "\uE721" });
+    expect(standIn(item("calc:2+2"))).toEqual({ glyph: "\uE8EF" });
+    expect(standIn({ ...item("path:C:\\a.txt"), actions: acts("open", "openwith") })).toEqual({ glyph: "\uE8A5" });
+    expect(standIn({ ...item("path:C:\\a"), actions: acts("open", "copyfile") })).toEqual({ glyph: "\uE8B7" });
+    expect(standIn({ ...item("path:C:\\n.md"), actions: acts("open", "editnote") })).toEqual({ glyph: "\uE70B" });
   });
 });

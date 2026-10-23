@@ -5,6 +5,15 @@
 - A mouse press on a result selects it at once and leaves typing in the search box. Results and menu entries show a faint fill under the pointer, and menu entries show the press.
 - The actions menu is a blurred, Windows-style material that grows in from its corner (not with reduced motion), and turns solid when Windows' transparency effects are off.
 - Error text uses the theme's error color, which is easier to read in light mode.
+- A new look, in the style of Windows 11:
+  - a search glyph in the search box;
+  - an icon for every result, with Windows' own glyphs (in an accent-tinted tile) for calculator answers, settings, files, folders, notes, Seekr's commands and the rest, and the emoji itself for an emoji;
+  - an accent bar beside the selected row;
+  - the preview as a raised card with a large icon and title;
+  - keys drawn as keycaps in the hint bar;
+  - thin scrollbars with no arrows;
+  - a centered message when there is nothing to show;
+  - settings grouped under plain headings, with values on the right and on/off shown as toggle switches.
 - The README has no screenshots; `app/e2e/screenshots.mjs` and `docs/screenshots` are gone.
 
 ## 0.1.0 - 2026-10-23
