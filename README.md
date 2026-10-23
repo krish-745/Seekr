@@ -154,11 +154,11 @@ Requirements: Windows 11, Rust (stable, MSVC), Visual Studio Build Tools with th
 scripts\dev.ps1     # run the app with hot reload
 scripts\check.ps1   # fmt, clippy, tests, cargo-deny, typecheck, vitest, release build, WebDriver smoke test
 scripts\smoke.ps1   # just the smoke test, on the last release build
-scripts\smoke.ps1 -Script app\e2e\screenshots.mjs   # retake these screenshots (shows the panel; check them before committing)
+scripts\smoke.ps1 -Script app\e2e\screenshots.mjs   # retake the README screenshots (shows the panel; check them before committing)
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for what a pull request needs.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for what a pull request needs, and [docs/hardening.md](docs/hardening.md) for how Seekr was tested.
 
 ## License
 
-Licensed under either of [Apache License 2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT), at your option. Third-party components and their licenses are in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+Seekr is available under two licenses, [Apache 2.0](LICENSE-APACHE) and [MIT](LICENSE-MIT); you may use, copy and change it under whichever of the two you prefer. Third-party components and their licenses are in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

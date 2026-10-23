@@ -35,15 +35,6 @@ own data and settings, and its last check briefly shows the panel by pressing a 
 - A new dependency needs a license `deny.toml` allows; then run `scripts\notices.ps1` and commit
   the updated `THIRD-PARTY-NOTICES.md`.
 
-## Releases (maintainer)
-
-Updates are signed with the maintainer's key, `%USERPROFILE%\.tauri\seekr-updater.key`, made
-once with `npx tauri signer generate`; its public half is the updater `pubkey` in
-`app/src-tauri/tauri.conf.json`. `scripts\package.ps1` asks for the key's password and writes
-the installer, its `.sig` and `latest.json` to `target\release\bundle\nsis`; all three go on
-the GitHub release, whose `latest.json` installed copies read. `-Unsigned` builds a test
-installer without the key.
-
 ## Privacy rules for code
 
 Seekr reads a lot of personal data, so:

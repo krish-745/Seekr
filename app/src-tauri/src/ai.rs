@@ -982,12 +982,12 @@ mod tests {
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     }
 
-    /// The Phase 5 targets: about 3,000 tokens of context, cold first word (start included)
+    /// The latency targets: about 3,000 tokens of context, cold first word (start included)
     /// within 6 s, warm within 1.5 s, at least 40 tokens/s, and the GPU back in P8 after the
-    /// model stops: `cargo test -p seekr phase5_gate -- --ignored --nocapture`
+    /// model stops: `cargo test -p seekr latency_targets -- --ignored --nocapture`
     #[test]
     #[ignore]
-    fn phase5_gate() {
+    fn latency_targets() {
         let ai = Ai::new(&common::Config::default());
         let root = concat!(env!("CARGO_MANIFEST_DIR"), r"\..\..\");
         let context = |file: &str| {

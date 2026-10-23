@@ -1,7 +1,7 @@
 # AI answers: model and runtime
 
 Seekr's AI answers read a few thousand tokens of your files and answer with citations. The model
-and the runtime that serves it were chosen by benchmark on this laptop (RTX 5050 Laptop GPU with
+and the runtime that serves it were chosen by benchmark on one laptop (RTX 5050 Laptop GPU with
 8 GB, Ryzen 7 250, 24 GB RAM, driver 596.49), with `bench/llm/bench.py`.
 
 - **Task:** 22 questions about Seekr, answered from its README and CHANGELOG at commit `eaa6dc8`.
@@ -47,9 +47,9 @@ already run it, but isn't the default.
 Cloud APIs answer only general `??` questions, which never carry file context, so they aren't
 compared on this task.
 
-## Phase 5 gate (Seekr's own code)
+## Targets, measured through Seekr's own code
 
-`cargo test -p seekr phase5_gate -- --ignored --nocapture` runs the default model through the
+`cargo test -p seekr latency_targets -- --ignored --nocapture` runs the default model through the
 same functions `?` uses, with about 3,000 tokens of passages per question (the first 12,000
 characters of a file), on the RTX 5050 Laptop GPU (8 GB), on top of 6560794:
 

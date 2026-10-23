@@ -17,7 +17,7 @@ if ($Unsigned) {
 } else {
     if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
         $key = Join-Path $env:USERPROFILE '.tauri\seekr-updater.key'
-        if (-not (Test-Path $key)) { throw "no signing key at $key; see CONTRIBUTING.md, or pass -Unsigned" }
+        if (-not (Test-Path $key)) { throw "no updater signing key at $key; pass -Unsigned to build without one" }
         $env:TAURI_SIGNING_PRIVATE_KEY = $key
     }
     if (-not $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) {

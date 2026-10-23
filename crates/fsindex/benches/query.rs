@@ -1,5 +1,5 @@
-//! `cargo bench -p fsindex`: fuzzy search over a synthetic two-million-entry index, the size of
-//! this laptop's C: drive.
+//! `cargo bench -p fsindex`: fuzzy search over a synthetic two-million-entry index, about the
+//! size of a well-used Windows C: drive.
 
 use std::hint::black_box;
 

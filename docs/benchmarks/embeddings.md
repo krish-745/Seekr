@@ -1,7 +1,7 @@
 # Embedding model and device
 
 Meaning search turns each passage and each query into a vector with an embedding model. The
-model and the device it runs on were chosen by benchmark on this laptop (Ryzen 7 250 with Radeon
+model and the device it runs on were chosen by benchmark on one laptop (Ryzen 7 250 with Radeon
 780M, RTX 5050 Laptop GPU, 24 GB RAM), with `bench/embeddings/bench.py` and `mixed.py`.
 
 - **Quality:** nDCG@10 on the [BEIR SciFact](https://huggingface.co/datasets/mteb/scifact) test
