@@ -13,6 +13,7 @@ try {
     Step 'cargo clippy' { cargo clippy --workspace --all-targets -- -D warnings }
     Step 'cargo test' { cargo test --workspace }
     Step 'cargo deny' { cargo deny check }
+    Step 'third-party notices' { powershell -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\notices.ps1" -Check }
     Push-Location app
     try {
         if (-not (Test-Path node_modules)) { Step 'npm install' { npm install } }
