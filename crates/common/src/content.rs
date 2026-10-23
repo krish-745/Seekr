@@ -31,7 +31,9 @@ pub fn chosen() -> Option<Vec<PathBuf>> {
 }
 
 fn parse(text: &str) -> Vec<PathBuf> {
-    text.lines()
+    // An editor may start the file with a byte-order mark, which would hide a first comment.
+    text.trim_start_matches('\u{feff}')
+        .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .map(PathBuf::from)
@@ -123,6 +125,12 @@ mod tests {
             p(r"C:\Work"),
         ]);
         assert_eq!(kept, [p(r"C:\Work"), p(r"C:\Workshop")]);
+    }
+
+    #[test]
+    fn ignores_a_byte_order_mark() {
+        assert!(parse("\u{feff}# none\n").is_empty());
+        assert_eq!(parse("\u{feff}C:\\Notes\n"), [PathBuf::from(r"C:\Notes")]);
     }
 
     #[test]
