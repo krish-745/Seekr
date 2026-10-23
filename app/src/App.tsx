@@ -110,7 +110,7 @@ type Answer = {
   took?: string;
 };
 
-/** What the local AI needs downloaded, and how far the download has got. */
+/** What a download pack (the local AI, or the meaning-search model) needs, and how far it has got. */
 type AiSetup = {
   parts: { label: string; bytes: number; done: boolean }[];
   download: number;
@@ -124,7 +124,8 @@ type SetupEvent =
   | { kind: "status"; text: string }
   | { kind: "done" }
   | { kind: "error"; text: string };
-type AiSetupView = { info: AiSetup; running: boolean; got: number[]; status?: string; error?: string };
+type Pack = "ai" | "meaning";
+type AiSetupView = { pack: Pack; info: AiSetup; running: boolean; got: number[]; status?: string; error?: string };
 
 const gb = (bytes: number) => `${(bytes / 1e9).toFixed(bytes < 1e9 ? 2 : 1)} GB`;
 const fileName = (path: string) => path.slice(path.lastIndexOf("\\") + 1);
@@ -203,6 +204,11 @@ function App() {
     if (s && (save || firstRun)) {
       const paths = save ? s.folders.filter((f) => f.checked).map((f) => f.path) : [];
       invoke("save_content_folders", { paths });
+      // Words are searched at once; matching by meaning needs its model, offered here once.
+      if (paths.length)
+        invoke<AiSetup>("ai_setup", { pack: "meaning" }).then((info) => {
+          if (info.download > 0) openAiSetup("meaning");
+        });
     }
     input.focus();
   }
@@ -312,10 +318,10 @@ function App() {
     saveSetting(field, field.kind === "number" && s.draft.trim() !== "" && !isNaN(number) ? number : s.draft);
   }
 
-  async function openAiSetup() {
+  async function openAiSetup(pack: Pack = "ai") {
     setActionsOpen(false);
-    const info = await invoke<AiSetup>("ai_setup");
-    setAiSetup({ info, running: false, got: info.parts.map(() => 0) });
+    const info = await invoke<AiSetup>("ai_setup", { pack });
+    setAiSetup({ pack, info, running: false, got: info.parts.map(() => 0) });
   }
 
   function installAi() {
@@ -339,7 +345,7 @@ function App() {
       else if (e.text === "cancelled") return;
       else setAiSetup({ ...v, running: false, status: undefined, error: e.text });
     };
-    invoke("install_ai", { onEvent });
+    invoke("install_ai", { pack: view.pack, onEvent });
   }
 
   /** Esc stops a download in progress; what finished stays installed. */
@@ -902,10 +908,11 @@ function App() {
       <Show when={aiSetup()}>
         {(v) => (
           <section class="setup">
-            <h2>Local AI</h2>
+            <h2>{v().pack === "ai" ? "Local AI" : "Meaning search"}</h2>
             <p class="subtitle">
-              Questions about your files are answered by a model on this PC, so your files never leave it. It needs
-              these, downloaded once from GitHub and Hugging Face and checked before use:
+              {v().pack === "ai"
+                ? "Questions about your files are answered by a model on this PC, so your files never leave it. It needs these, downloaded once from GitHub and Hugging Face and checked before use:"
+                : "Finding files by what they mean, not only by their words, uses a model that runs on this PC, so your files never leave it. It needs these, downloaded once from Hugging Face and checked before use:"}
             </p>
             <ul class="folders downloads" aria-label="Downloads">
               <For each={v().info.parts}>
@@ -930,8 +937,10 @@ function App() {
             </ul>
             <p class="subtitle">
               Downloads {gb(v().info.download)} and needs {gb(v().info.needed)} free while installing ({gb(v().info.free)}{" "}
-              free now). Once installed it takes {gb(v().info.installed)} in {v().info.folder}. The model uses about 4 GB
-              of graphics memory while answering and is unloaded after 10 idle minutes.
+              free now). Once installed it takes {gb(v().info.installed)} in {v().info.folder}.{" "}
+              {v().pack === "ai"
+                ? "The model uses about 4 GB of graphics memory while answering and is unloaded after 10 idle minutes."
+                : "Word search works without it; files already indexed are matched by meaning once it is in."}
             </p>
             <Show when={v().status}>{(status) => <p class="subtitle">{status()}</p>}</Show>
             <Show when={v().error}>{(error) => <p class="error">{error()}</p>}</Show>

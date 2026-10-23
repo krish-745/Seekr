@@ -1,5 +1,6 @@
-//! Fetches what `?` questions need when it isn't on this PC yet: llama.cpp's server (with the
-//! CUDA runtime it needs) and the Qwen3.5-4B model, about 3.3 GB. Each file is checked against
+//! Fetches models that aren't on this PC yet, as packs: `ai`, what `?` questions need (llama.cpp's
+//! server, the CUDA runtime it needs and the Qwen3.5-4B model, about 3.3 GB), and `meaning`, the
+//! gte-modernbert-base model meaning search needs (about 750 MB). Each file is checked against
 //! its SHA-256 before it is used; a download that doesn't match is thrown away.
 
 use std::{
@@ -14,7 +15,7 @@ use std::{
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use tauri::ipc::Channel;
+use tauri::{AppHandle, Manager, ipc::Channel};
 use windows::{Win32::Storage::FileSystem::GetDiskFreeSpaceExW, core::HSTRING};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -32,10 +33,37 @@ struct Part {
     marker: &'static str,
 }
 
+struct Pack {
+    name: &'static str,
+    /// Under the data folder: where its files go, and where downloads wait until checked.
+    dir: &'static str,
+    parts: &'static [Part],
+}
+
+const PACKS: [Pack; 2] = [
+    Pack {
+        name: "ai",
+        dir: "llm",
+        parts: &AI,
+    },
+    Pack {
+        name: "meaning",
+        dir: r"models\gte-modernbert-base",
+        parts: &MEANING,
+    },
+];
+
+fn pack(name: &str) -> Result<&'static Pack, String> {
+    PACKS
+        .iter()
+        .find(|p| p.name == name)
+        .ok_or_else(|| format!("no download called {name}"))
+}
+
 /// In install order: the runtime's DLLs go in before llama-server.exe, which marks it installed.
 // shortcut: only the default model and the CUDA build are offered; a PC without an NVIDIA GPU
 // would need llama.cpp's Vulkan or CPU build here.
-const PARTS: [Part; 3] = [
+const AI: [Part; 3] = [
     Part {
         label: "CUDA runtime for llama.cpp",
         url: "https://github.com/ggml-org/llama.cpp/releases/download/b11819/cudart-llama-bin-win-cuda-13.4-x64.zip",
@@ -62,6 +90,38 @@ const PARTS: [Part; 3] = [
         installed: 2_740_937_888,
         into: r"llm\models\Qwen3.5-4B-Q4_K_M.gguf",
         marker: r"llm\models\Qwen3.5-4B-Q4_K_M.gguf",
+    },
+];
+
+/// gte-modernbert-base at `content::embed::REVISION`: the int8 weights answer queries, the full
+/// ones embed documents (docs/benchmarks/embeddings.md).
+const MEANING: [Part; 3] = [
+    Part {
+        label: "Tokenizer",
+        url: "https://huggingface.co/Alibaba-NLP/gte-modernbert-base/resolve/e7f32e3c00f91d699e8c43b53106206bcc72bb22/tokenizer.json",
+        sha256: "6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30",
+        bytes: 3_583_228,
+        installed: 3_583_228,
+        into: r"models\gte-modernbert-base\tokenizer.json",
+        marker: r"models\gte-modernbert-base\tokenizer.json",
+    },
+    Part {
+        label: "Model for queries (int8)",
+        url: "https://huggingface.co/Alibaba-NLP/gte-modernbert-base/resolve/e7f32e3c00f91d699e8c43b53106206bcc72bb22/onnx/model_int8.onnx",
+        sha256: "bae96b276d342bf86eeee07c1bdbc0c75bb82bf4033941aab7fabc1e33ee3b44",
+        bytes: 150_218_016,
+        installed: 150_218_016,
+        into: r"models\gte-modernbert-base\onnx\model_int8.onnx",
+        marker: r"models\gte-modernbert-base\onnx\model_int8.onnx",
+    },
+    Part {
+        label: "Model for documents",
+        url: "https://huggingface.co/Alibaba-NLP/gte-modernbert-base/resolve/e7f32e3c00f91d699e8c43b53106206bcc72bb22/onnx/model.onnx",
+        sha256: "947f31df7effaeec4edb57c50e4ed7e0f2034d9336063f92615b92e3e0d24d78",
+        bytes: 596_392_315,
+        installed: 596_392_315,
+        into: r"models\gte-modernbert-base\onnx\model.onnx",
+        marker: r"models\gte-modernbert-base\onnx\model.onnx",
     },
 ];
 
@@ -98,23 +158,25 @@ pub enum SetupEvent {
     Error { text: String },
 }
 
-fn missing() -> impl Iterator<Item = (usize, &'static Part)> {
-    PARTS
+fn missing(pack: &'static Pack) -> impl Iterator<Item = (usize, &'static Part)> {
+    pack.parts
         .iter()
         .enumerate()
         .filter(|(_, p)| !common::data_dir().join(p.marker).exists())
 }
 
 #[tauri::command]
-pub fn ai_setup() -> AiSetup {
-    let llm = common::data_dir().join("llm");
-    let _ = fs::create_dir_all(&llm);
+pub fn ai_setup(pack: &str) -> Result<AiSetup, String> {
+    let pack = self::pack(pack)?;
+    let dir = common::data_dir().join(pack.dir);
+    let _ = fs::create_dir_all(&dir);
     let mut free = 0u64;
     let _ = unsafe {
-        GetDiskFreeSpaceExW(&HSTRING::from(llm.as_os_str()), Some(&mut free), None, None)
+        GetDiskFreeSpaceExW(&HSTRING::from(dir.as_os_str()), Some(&mut free), None, None)
     };
-    AiSetup {
-        parts: PARTS
+    Ok(AiSetup {
+        parts: pack
+            .parts
             .iter()
             .map(|p| PartState {
                 label: p.label,
@@ -122,21 +184,26 @@ pub fn ai_setup() -> AiSetup {
                 done: common::data_dir().join(p.marker).exists(),
             })
             .collect(),
-        download: missing().map(|(_, p)| p.bytes).sum(),
-        needed: missing().map(|(_, p)| p.installed).sum::<u64>()
-            + missing()
+        download: missing(pack).map(|(_, p)| p.bytes).sum(),
+        needed: missing(pack).map(|(_, p)| p.installed).sum::<u64>()
+            + missing(pack)
                 .map(|(_, p)| if p.bytes == p.installed { 0 } else { p.bytes })
                 .max()
                 .unwrap_or(0),
-        installed: PARTS.iter().map(|p| p.installed).sum(),
+        installed: pack.parts.iter().map(|p| p.installed).sum(),
         free,
-        folder: llm.display().to_string(),
-    }
+        folder: dir.display().to_string(),
+    })
 }
 
 /// Downloads and installs whatever is missing, reporting progress, until done or cancelled.
 #[tauri::command]
-pub async fn install_ai(on_event: Channel<SetupEvent>) -> Result<(), String> {
+pub async fn install_ai(
+    app: AppHandle,
+    pack: String,
+    on_event: Channel<SetupEvent>,
+) -> Result<(), String> {
+    let pack = self::pack(&pack)?;
     if INSTALLING.swap(true, Ordering::SeqCst) {
         return Err("already downloading".into());
     }
@@ -145,12 +212,18 @@ pub async fn install_ai(on_event: Channel<SetupEvent>) -> Result<(), String> {
         let send = |e: SetupEvent| {
             let _ = on_event.send(e);
         };
-        let result = missing().try_for_each(|(i, part)| install(i, part, &send));
+        let result = missing(pack).try_for_each(|(i, part)| install(pack, i, part, &send));
         INSTALLING.store(false, Ordering::SeqCst);
         match result {
-            Ok(()) => send(SetupEvent::Done),
+            Ok(()) => {
+                // Files already indexed get their meaning vectors in the next full pass.
+                if pack.name == "meaning" {
+                    app.state::<crate::indexer::Indexer>().refresh();
+                }
+                send(SetupEvent::Done);
+            }
             Err(e) => {
-                tracing::warn!("AI setup failed: {e}");
+                tracing::warn!("{} download failed: {e}", pack.name);
                 send(SetupEvent::Error { text: e });
             }
         }
@@ -164,11 +237,16 @@ pub fn cancel_ai_setup() {
     CANCEL.store(true, Ordering::SeqCst);
 }
 
-fn install(index: usize, part: &Part, send: &impl Fn(SetupEvent)) -> Result<(), String> {
+fn install(
+    pack: &Pack,
+    index: usize,
+    part: &Part,
+    send: &impl Fn(SetupEvent),
+) -> Result<(), String> {
     let data = common::data_dir();
     let into = data.join(part.into);
     let file_name = part.url.rsplit('/').next().unwrap_or("download");
-    let partial = data.join("llm").join(format!("{file_name}.part"));
+    let partial = data.join(pack.dir).join(format!("{file_name}.part"));
     let result = download(index, part, &partial, send).and_then(|()| {
         if part.bytes == part.installed {
             fs::create_dir_all(into.parent().unwrap()).map_err(|e| e.to_string())?;
@@ -278,15 +356,31 @@ mod tests {
 
     #[test]
     fn parts_install_in_an_order_that_marks_the_runtime_last() {
-        assert_eq!(PARTS[1].marker, crate::ai::RUNTIME);
-        assert!(
-            PARTS
-                .iter()
-                .all(|p| p.sha256.len() == 64 && p.url.starts_with("https://"))
-        );
-        let setup = ai_setup();
+        assert_eq!(AI[1].marker, crate::ai::RUNTIME);
+        for pack in &PACKS {
+            assert!(pack.parts.iter().all(|p| p.sha256.len() == 64
+                && p.url.starts_with("https://")
+                && p.into.starts_with(pack.dir)));
+        }
+        let setup = ai_setup("ai").unwrap();
         assert!(setup.installed > 3_400_000_000);
         assert!(setup.download == 0 || setup.needed >= setup.download);
+        assert!(ai_setup("nope").is_err());
+    }
+
+    #[test]
+    fn meaning_pack_is_what_the_embedder_loads() {
+        assert!(
+            MEANING
+                .iter()
+                .all(|p| p.url.contains(::content::embed::REVISION))
+        );
+        let dir = ::content::embed::model_dir();
+        let data = common::data_dir();
+        for part in &MEANING {
+            assert!(data.join(part.into).starts_with(&dir));
+        }
+        assert_eq!(ai_setup("meaning").unwrap().installed, 750_193_559);
     }
 
     /// Downloads llama.cpp (160 MB) into a scratch data folder, checks and unpacks it:
@@ -300,7 +394,7 @@ mod tests {
         let events = std::sync::Mutex::new(Vec::new());
         let send = |e: SetupEvent| events.lock().unwrap().push(e);
         let started = Instant::now();
-        install(1, &PARTS[1], &send).unwrap();
+        install(&PACKS[0], 1, &AI[1], &send).unwrap();
         let progress = events
             .lock()
             .unwrap()
@@ -322,13 +416,13 @@ mod tests {
             sha256: "0000000000000000000000000000000000000000000000000000000000000000",
             into: r"llm\wrong.gguf",
             marker: r"llm\wrong.gguf",
-            ..PARTS[1]
+            ..AI[1]
         };
         let wrong = Part {
             installed: wrong.bytes,
             ..wrong
         };
-        let e = install(1, &wrong, &send).unwrap_err();
+        let e = install(&PACKS[0], 1, &wrong, &send).unwrap_err();
         assert!(e.contains("didn't match"), "{e}");
         assert!(!dir.join(r"llm\wrong.gguf").exists());
         fs::remove_dir_all(&dir).unwrap();

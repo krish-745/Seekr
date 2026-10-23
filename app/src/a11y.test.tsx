@@ -60,6 +60,17 @@ beforeAll(() => {
             ],
           };
         if (cmd === "preview") return { kind: "nothing" };
+        if (cmd === "content_setup_needed") return true;
+        if (cmd === "content_setup") return { folders: [{ path: "C:\\Users\\me\\Documents", checked: true }], notes: null };
+        if (cmd === "ai_setup")
+          return {
+            parts: [{ label: "Tokenizer", bytes: 3583228, done: false }],
+            download: 3583228,
+            needed: 3583228,
+            installed: 750193559,
+            free: 1e11,
+            folder: "C:\\Users\\me\\AppData\\Local\\Seekr\\models\\gte-modernbert-base",
+          };
         if (cmd === "plugin:event|listen") return 1;
         return null;
       },
@@ -126,5 +137,19 @@ test("results, actions and settings can be followed by a screen reader", async (
   expect(list.getAttribute("aria-activedescendant")).toBe("setting-1");
   expect(scrolledTo).toBe("setting-1");
   expect(document.getElementById("setting-1")?.getAttribute("aria-description")).toBe("Tools");
+  expect(await problems()).toEqual([]);
+  key("Escape");
+  await frames();
+});
+
+test("saving content folders offers the meaning-search model when it is missing", async () => {
+  // The first time the panel takes focus, it asks which folders to search inside.
+  window.dispatchEvent(new Event("focus"));
+  await frames();
+  expect(document.querySelector('[aria-label="Folders to search inside"]')).not.toBeNull();
+  key("Enter");
+  await frames();
+  expect(document.querySelector("section.setup h2")?.textContent).toBe("Meaning search");
+  expect(document.querySelector('[aria-label="Downloads"]')?.textContent).toContain("Tokenizer");
   expect(await problems()).toEqual([]);
 });

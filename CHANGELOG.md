@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The meaning-search model can be downloaded from the app: saving content folders while it is missing opens a download screen (the same one, checks and cancel as the local AI's, now with named packs `ai` and `meaning`), and once it is in, a full indexing pass gives files already indexed their meaning vectors. `install.ps1` still fetches it as before.
 - README screenshots from the real app (`app/e2e/screenshots.mjs`, run through `scripts/smoke.ps1 -Script`), with the web tool off so no bookmarks or history appear. The smoke test now writes its config without a byte-order mark.
 - The settings list and the folder picker scroll to keep the selected entry in sight as the arrow keys move it; before, the selection could move below the bottom of the panel.
 - `content-folders.txt` saved by an editor that adds a byte-order mark no longer turns its first line, often a comment, into a folder.
