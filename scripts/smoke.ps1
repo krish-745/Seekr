@@ -1,8 +1,9 @@
 # WebDriver smoke test of the release build (target\release\seekr.exe), through tauri-driver
 # and the msedgedriver matching the installed WebView2. The test instance gets its own data and
 # config folders, so it runs beside an installed Seekr without touching its index or settings.
-# -Keep leaves the test instance's data folder, with its log, in %TEMP%.
-param([int]$Port = 4444, [switch]$Keep)
+# -Keep leaves the test instance's data folder, with its log, in %TEMP%. -Script runs another
+# WebDriver script the same way, such as app\e2e\screenshots.mjs.
+param([int]$Port = 4444, [switch]$Keep, [string]$Script = (Join-Path (Split-Path $PSScriptRoot -Parent) 'app\e2e\smoke.mjs'))
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -37,14 +38,16 @@ if (-not $tauriDriver) {
 $scratch = Join-Path $env:TEMP "seekr-smoke-$PID"
 New-Item -ItemType Directory -Force "$scratch\data", "$scratch\config" | Out-Null
 # A hotkey nobody uses, and no clipboard history: the test instance shouldn't record the user's copies.
-Set-Content "$scratch\config\config.toml" -Encoding utf8 -Value @'
+# Written without the byte-order mark PowerShell 5.1's -Encoding utf8 adds.
+$utf8 = [Text.UTF8Encoding]::new($false)
+[IO.File]::WriteAllText("$scratch\config\config.toml", @'
 hotkey = "Ctrl+Alt+Shift+F12"
 
 [tools]
 clipboard = false
-'@
+'@, $utf8)
 # No content folders, already answered: otherwise the first focus asks for them over the results.
-Set-Content "$scratch\data\content-folders.txt" -Encoding utf8 -Value '# none, for the smoke test'
+[IO.File]::WriteAllText("$scratch\data\content-folders.txt", "# none, for the smoke test`n", $utf8)
 $saved = $env:SEEKR_DATA_DIR, $env:SEEKR_CONFIG_DIR
 $env:SEEKR_DATA_DIR = "$scratch\data"
 $env:SEEKR_CONFIG_DIR = "$scratch\config"
@@ -56,7 +59,7 @@ try {
         if ((Get-Date) -gt $deadline) { throw 'tauri-driver did not start' }
         Start-Sleep -Milliseconds 200
     }
-    node (Join-Path $root 'app\e2e\smoke.mjs') "http://127.0.0.1:$Port" $app
+    node $Script "http://127.0.0.1:$Port" $app
     $code = $LASTEXITCODE
 } finally {
     $env:SEEKR_DATA_DIR, $env:SEEKR_CONFIG_DIR = $saved
