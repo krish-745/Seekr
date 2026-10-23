@@ -2,8 +2,9 @@
 
 ## Unreleased
 
-- PDF text is searched, by words and by meaning, in the folders you choose. `pdfium.dll` (PDFium build 7881 from bblanchon/pdfium-binaries, about 7 MB, fetched once by `crates/content/build.rs` and checked against its SHA-256) is shipped beside the content indexer. A content match in a PDF previews the text around it, and Summarize with AI works on PDFs. Scanned pages without a text layer add nothing, as there is no OCR.
+## 0.1.1 - 2026-10-24
 
+- PDF text is searched, by words and by meaning, in the folders you choose. `pdfium.dll` (PDFium build 7881 from bblanchon/pdfium-binaries, about 7 MB, fetched once by `crates/content/build.rs` and checked against its SHA-256) is shipped beside the content indexer. A content match in a PDF previews the text around it, and Summarize with AI works on PDFs. Scanned pages without a text layer add nothing, as there is no OCR.
 - A mouse press on a result selects it at once and leaves typing in the search box. Results and menu entries show a faint fill under the pointer, and menu entries show the press.
 - The actions menu is a blurred, Windows-style material that grows in from its corner (not with reduced motion), and turns solid when Windows' transparency effects are off.
 - Error text uses the theme's error color, which is easier to read in light mode.
@@ -17,6 +18,8 @@
   - a centered message when there is nothing to show;
   - settings grouped under plain headings, with values on the right and on/off shown as toggle switches.
 - The README has no screenshots; `app/e2e/screenshots.mjs` and `docs/screenshots` are gone.
+- `scripts/package.ps1 -Unsigned` works: PowerShell 5.1 stripped the quotes from the JSON it passed to Tauri.
+- CI runs `actions/checkout` and `actions/setup-node` v7, which run on Node 24.
 
 ## 0.1.0 - 2026-10-23
 

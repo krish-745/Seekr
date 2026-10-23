@@ -1,6 +1,6 @@
 # How Seekr was tested
 
-The stress tests, accessibility checks, automated tests and installer tests behind 0.1.0, what
+The stress tests, accessibility checks, automated tests and installer tests behind Seekr, what
 each found, and what was changed because of it. All of them ran on one PC: Windows 11, AMD Ryzen
 7 250 with Radeon 780M, RTX 5050 Laptop GPU, and an NVMe C: drive with about 2.09 million names.
 
@@ -66,4 +66,4 @@ theme on screen.
 threads), the GPU's power state and the battery every five minutes, to
 `%LOCALAPPDATA%\Seekr\soak`, for as many hours as `-Hours` says; `scripts/soak.ps1 -Report`
 summarizes a run. It shows memory or handles that grow over days, which shorter tests can't. A
-run needs the PC on and awake throughout. No long run has been completed for 0.1.0 yet.
+run needs the PC on and awake throughout. No long run has been completed yet.
