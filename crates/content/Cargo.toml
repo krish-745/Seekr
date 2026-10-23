@@ -14,4 +14,9 @@ serde_json = "1"
 tantivy = "0.27.0"
 zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 ort = { version = "=2.0.0-rc.15", features = ["directml"] }
+# Bound at run time to the pdfium.dll build.rs puts beside the binaries; 7881 is that build.
+pdfium-render = { version = "0.9.4", default-features = false, features = ["pdfium_7881", "thread_safe"] }
 tokenizers = { version = "0.22.2", default-features = false, features = ["fancy-regex"] }
+
+[build-dependencies]
+sha2 = "0.10"

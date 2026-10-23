@@ -113,6 +113,8 @@ exceptions = [
     #{ allow = ["Zlib"], crate = "adler32" },
     # Build-time only: ort-sys downloads and checks the ONNX Runtime binaries with these.
     { allow = ["ISC"], crate = "hmac-sha256" },
+    # pdfium-render loads pdfium.dll with it.
+    { allow = ["ISC"], crate = "libloading" },
     { allow = ["CDLA-Permissive-2.0"], crate = "webpki-root-certs" },
 ]
 

@@ -85,7 +85,7 @@ Type `:` and a word: `:fire`, `:laugh`, `:indian rupee`, `:double arrow`, `:gree
 
 - `?` and a question asks about **your files**: `?when is the rent due`. The answer cites the passages it used; click a number to open that file. A model on your GPU answers, so nothing leaves your PC; it stops after ten idle minutes.
 - `??` and a question asks **anything**: `??explain big-O notation`. A cloud model answers, and only what you type after `??` is sent, never your files.
-- On a text, Markdown, code, Word, PowerPoint or Excel file, Tab → **Summarize with AI** summarizes it with the model on your GPU; `?` follow-ups then ask about that file. A long file is cut to its first 16,000 characters, and the model is told so.
+- On a text, Markdown, code, Word, PowerPoint, Excel or PDF file, Tab → **Summarize with AI** summarizes it with the model on your GPU; `?` follow-ups then ask about that file. A long file is cut to its first 16,000 characters, and the model is told so.
 
 Follow up with another `?` (or `??`) question; Esc stops an answer.
 
@@ -130,7 +130,7 @@ Everything is saved to `%APPDATA%\Seekr\config.toml` (your comments in it are ke
 
 ## Known limitations
 
-- Text inside PDFs isn't searched; their names are.
+- Scanned PDFs (pages that are only pictures) have no text to search; Seekr doesn't do OCR.
 - Exclusions are folder paths or whole names, without wildcards.
 - `?` needs an NVIDIA GPU: only llama.cpp's CUDA build is offered.
 - A download that stops starts over the next time.
@@ -140,7 +140,7 @@ Everything is saved to `%APPDATA%\Seekr\config.toml` (your comments in it are ke
 
 ## Develop
 
-Requirements: Windows 11, Rust (stable, MSVC), Visual Studio Build Tools with the C++ workload, Node.js 20+.
+Requirements: Windows 11, Rust (stable, MSVC), Visual Studio Build Tools with the C++ workload, Node.js 20+. The first build downloads `pdfium.dll` (3.7 MB, a pinned build checked against its SHA-256) from GitHub into `target\pdfium`.
 
 ```powershell
 scripts\dev.ps1     # run the app with hot reload

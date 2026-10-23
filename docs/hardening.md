@@ -28,8 +28,12 @@ Indexing files that were written a moment earlier is slow on the test PC (16.9 s
 files, 2.4 s for the same files read again): the time goes to Windows Defender scanning each new
 file as it is first opened, outside Seekr.
 
-PDFs aren't read at all yet (no PDF text extraction is built), so malformed PDFs can't reach
-the extractor.
+Malformed PDFs, read through pdfium by the `content` test `hostile_files` (release build):
+200 KB of random bytes after a PDF header, a PDF cut in half, and one whose pages list itself
+were each refused or read as empty in at most 98 ms; a million nested arrays took 0.9 s and a
+2,000-page PDF 63 ms. The slowest was one page whose 50 MB content stream draws the same words
+2.2 million times: 23 s. The content indexer reads each file in its own process with a 30 s
+limit, so nothing a PDF does can stop the panel, and a file over the limit is quarantined.
 
 ## Accessibility
 

@@ -53,8 +53,9 @@ if (-not $SkipService) { Invoke-Service (Join-Path $root 'target\release\seekr-s
 
 New-Item -ItemType Directory -Force $dest | Out-Null
 Copy-Item (Join-Path $root 'target\release\seekr.exe') $exe -Force
-# The content indexer runs from next to the app; both load DirectML for the embedding model.
-foreach ($file in 'seekr-indexer.exe', 'DirectML.dll') {
+# The content indexer runs from next to the app; both load DirectML for the embedding model and
+# pdfium for PDF text.
+foreach ($file in 'seekr-indexer.exe', 'DirectML.dll', 'pdfium.dll') {
     Copy-Item (Join-Path $root "target\release\$file") (Join-Path $dest $file) -Force
 }
 

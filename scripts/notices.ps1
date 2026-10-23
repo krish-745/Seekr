@@ -28,6 +28,16 @@ $js = foreach ($path in $wanted) {
     "### $($package.name) $($package.version) ($($package.license))`n`n``````n$text`n``````n"
 }
 
+# pdfium's own license and those of the libraries built into pdfium.dll, from the pinned build
+# that crates\content\build.rs fetched into target\pdfium.
+$build = [regex]::Match([IO.File]::ReadAllText((Join-Path $root 'crates\content\build.rs')), 'const BUILD: &str = "(\d+)"').Groups[1].Value
+$pdfium = Join-Path $root "target\pdfium\$build"
+if (-not (Test-Path "$pdfium\licenses")) { throw "no $pdfium\licenses: build first (cargo build -p content fetches it)" }
+$pdfiumNotices = foreach ($file in @(Get-Item "$pdfium\LICENSE") + @(Get-ChildItem "$pdfium\licenses" -File | Sort-Object Name)) {
+    $name = if ($file.Name -eq 'LICENSE') { 'pdfium-binaries (the build)' } else { $file.Name }
+    "#### $name`n`n``````n$([IO.File]::ReadAllText($file.FullName).Trim())`n``````n"
+}
+
 $header = @'
 # Third-party notices
 
@@ -69,6 +79,12 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+### PDFium, build {PDFIUM} (`pdfium.dll`, from bblanchon/pdfium-binaries)
+
+The PDF library from Chromium, for the text of PDFs. Its license and those of the libraries
+built into it:
+
+{PDFIUM_NOTICES}
 ### Unicode CLDR 48 annotations (`app/src-tauri/data/cldr-annotations.txt`)
 
 Emoji and symbol names and keywords, under the Unicode License v3, whose text is in the Rust
@@ -88,6 +104,7 @@ crates section below.
 
 '@
 
+$header = $header.Replace('{PDFIUM}', $build).Replace('{PDFIUM_NOTICES}', ($pdfiumNotices -join "`n"))
 $text = ($header + "`n" + ($js -join "`n") + "`n" + ($rust -join "`n")).TrimEnd() + "`n"
 $text = $text -replace "`r`n", "`n"
 if ($Check) {

@@ -7,6 +7,7 @@
       "../../target/release/seekr-indexer.exe": "seekr-indexer.exe",
       "../../target/release/seekr-svc.exe": "seekr-svc.exe",
       "../../target/release/DirectML.dll": "DirectML.dll",
+      "../../target/release/pdfium.dll": "pdfium.dll",
       "../../THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md",
       "../../PRIVACY.md": "PRIVACY.md"
     },

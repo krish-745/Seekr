@@ -11,7 +11,8 @@ and leave out anything private; the log names a file only when it fails to index
 ## Building
 
 Requirements: Windows 11, Rust (stable, MSVC), Visual Studio Build Tools with the C++ workload,
-Node.js 20+.
+Node.js 20+. The first build downloads `pdfium.dll` from GitHub into `target\pdfium`
+(`crates/content/build.rs` pins the build and its SHA-256).
 
 ```powershell
 scripts\dev.ps1       # run the app with hot reload

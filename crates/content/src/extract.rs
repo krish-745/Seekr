@@ -1,17 +1,21 @@
 //! Plain text from the files content search reads: text and code, Markdown, Jupyter notebooks,
-//! RTF, and Word, PowerPoint and Excel files. PDF text needs pdfium, which comes later.
+//! RTF, Word, PowerPoint and Excel files, and PDFs (through pdfium.dll).
 
 use std::{
     fs,
     io::{self, BufRead, BufReader, Read},
     path::Path,
+    sync::OnceLock,
 };
 
+use pdfium_render::prelude::Pdfium;
 use quick_xml::{Reader, events::Event as Xml};
 
 /// Larger text files are logs or data dumps, not documents anyone searches by content.
 pub const MAX_TEXT_BYTES: u64 = 4 * 1024 * 1024;
 pub const MAX_OFFICE_BYTES: u64 = 64 * 1024 * 1024;
+/// Scanned PDFs run to hundreds of megabytes of images with no text to find.
+pub const MAX_PDF_BYTES: u64 = 64 * 1024 * 1024;
 /// Uncompressed bytes read from one part of an Office file, against zip bombs.
 const OFFICE_PART_BYTES: u64 = 32 * 1024 * 1024;
 /// All the XML a document may inflate to: a deck of hundreds of zip-bomb slides would otherwise
@@ -99,6 +103,7 @@ pub enum Kind {
     Word,
     PowerPoint,
     Excel,
+    Pdf,
 }
 
 impl Kind {
@@ -111,6 +116,7 @@ impl Kind {
             "docx" => Kind::Word,
             "pptx" => Kind::PowerPoint,
             "xlsx" => Kind::Excel,
+            "pdf" => Kind::Pdf,
             e if TEXT.contains(&e) => Kind::Text,
             _ => return None,
         })
@@ -119,6 +125,7 @@ impl Kind {
     pub fn max_bytes(self) -> u64 {
         match self {
             Kind::Word | Kind::PowerPoint | Kind::Excel => MAX_OFFICE_BYTES,
+            Kind::Pdf => MAX_PDF_BYTES,
             _ => MAX_TEXT_BYTES,
         }
     }
@@ -131,7 +138,40 @@ pub fn extract(path: &Path, kind: Kind) -> io::Result<Option<String>> {
         Kind::Notebook => text(path, MAX_TEXT_BYTES)?.map(|t| notebook(&t)),
         Kind::Rtf => text(path, MAX_TEXT_BYTES)?.map(|t| rtf(&t)),
         Kind::Word | Kind::PowerPoint | Kind::Excel => Some(office(path, kind, usize::MAX)?),
+        Kind::Pdf => Some(pdf(path, MAX_TEXT_BYTES as usize)?),
     })
+}
+
+/// pdfium.dll from beside the running exe, bound once; None when it is missing.
+fn pdfium() -> Option<&'static Pdfium> {
+    static PDFIUM: OnceLock<Option<Pdfium>> = OnceLock::new();
+    PDFIUM
+        .get_or_init(|| {
+            let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+            let library = Pdfium::pdfium_platform_library_name_at_path(&dir);
+            Pdfium::bind_to_library(library).ok().map(Pdfium::new)
+        })
+        .as_ref()
+}
+
+/// The text of a PDF, page by page with a blank line between pages, stopping after `limit`
+/// bytes. Scanned pages have no text layer, so they add nothing.
+pub fn pdf(path: &Path, limit: usize) -> io::Result<String> {
+    let pdfium = pdfium().ok_or_else(|| io::Error::other("pdfium.dll is missing"))?;
+    let document = pdfium
+        .load_pdf_from_file(path, None)
+        .map_err(|e| io::Error::other(format!("{e:?}")))?;
+    let mut text = String::new();
+    for page in document.pages().iter() {
+        if let Ok(page_text) = page.text() {
+            text.push_str(page_text.all().trim_end());
+        }
+        text.push_str("\n\n");
+        if text.len() > limit {
+            break;
+        }
+    }
+    Ok(text)
 }
 
 /// Up to `limit` bytes of a text file, or None for binary content. UTF-16 files with a byte
@@ -377,7 +417,10 @@ mod tests {
             };
             for (what, limit) in [("preview", 20_000), ("index", usize::MAX)] {
                 let start = std::time::Instant::now();
-                let result = office(&path, kind, limit);
+                let result = match kind {
+                    Kind::Pdf => pdf(&path, limit),
+                    _ => office(&path, kind, limit),
+                };
                 println!(
                     "{:>15} {what:7} {:>8.2?} {}",
                     path.file_name().unwrap().to_string_lossy(),
@@ -391,11 +434,77 @@ mod tests {
         }
     }
 
+    /// A PDF with one page per string, each drawing it in Helvetica, its byte offsets right.
+    fn write_pdf(path: &Path, pages: &[&str]) {
+        let n = pages.len();
+        let kids: Vec<String> = (0..n).map(|i| format!("{} 0 R", 4 + 2 * i)).collect();
+        let mut objects = vec![
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            format!("<< /Type /Pages /Kids [{}] /Count {n} >>", kids.join(" ")),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+        ];
+        for (i, words) in pages.iter().enumerate() {
+            let stream = format!("BT /F1 12 Tf 72 720 Td ({words}) Tj ET");
+            objects.push(format!(
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents {} 0 R >>",
+                5 + 2 * i
+            ));
+            objects.push(format!(
+                "<< /Length {} >>\nstream\n{stream}\nendstream",
+                stream.len()
+            ));
+        }
+        let mut pdf = String::from("%PDF-1.4\n");
+        let mut offsets = Vec::new();
+        for (i, object) in objects.iter().enumerate() {
+            offsets.push(pdf.len());
+            pdf.push_str(&format!("{} 0 obj\n{object}\nendobj\n", i + 1));
+        }
+        let xref = pdf.len();
+        pdf.push_str(&format!(
+            "xref\n0 {}\n0000000000 65535 f \n",
+            objects.len() + 1
+        ));
+        for offset in offsets {
+            pdf.push_str(&format!("{offset:010} 00000 n \n"));
+        }
+        pdf.push_str(&format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            objects.len() + 1
+        ));
+        fs::write(path, pdf).unwrap();
+    }
+
+    #[test]
+    fn pdf_text_page_by_page() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("seekr-pages-{}.pdf", std::process::id()));
+        write_pdf(&path, &["Quarterly invoice total", "Second page words"]);
+        let text = extract(&path, Kind::Pdf).unwrap().unwrap();
+        let first = pdf(&path, 1).unwrap();
+        fs::remove_file(&path).unwrap();
+        assert_eq!(text, "Quarterly invoice total\n\nSecond page words\n\n");
+        assert_eq!(
+            first, "Quarterly invoice total\n\n",
+            "stops after the limit"
+        );
+    }
+
+    #[test]
+    fn a_broken_pdf_is_an_error_not_a_crash() {
+        let path = std::env::temp_dir().join(format!("seekr-broken-{}.pdf", std::process::id()));
+        fs::write(&path, b"%PDF-1.7\n1 0 obj << /Type /Catalog /Pages 9 0 R").unwrap();
+        let result = pdf(&path, usize::MAX);
+        fs::remove_file(&path).unwrap();
+        assert!(result.is_err(), "{result:?}");
+    }
+
     #[test]
     fn kinds_by_extension() {
         assert_eq!(Kind::of(Path::new("a.RS")), Some(Kind::Text));
         assert_eq!(Kind::of(Path::new("notes.md")), Some(Kind::Markdown));
         assert_eq!(Kind::of(Path::new("deck.pptx")), Some(Kind::PowerPoint));
+        assert_eq!(Kind::of(Path::new("Report.PDF")), Some(Kind::Pdf));
         assert_eq!(Kind::of(Path::new("photo.jpg")), None);
         assert_eq!(
             Kind::of(Path::new(".env")),
