@@ -413,7 +413,9 @@ fn read_history(path: &Path, browser: &'static str) -> io::Result<Vec<Page>> {
     if !path.exists() {
         return Err(io::ErrorKind::NotFound.into());
     }
-    let dir = std::env::temp_dir().join(format!("seekr-history-{}", std::process::id()));
+    let temp = std::env::temp_dir();
+    sweep_stale_copies(&temp, Duration::from_secs(10 * 60));
+    let dir = temp.join(format!("{HISTORY_COPY}{}", std::process::id()));
     fs::create_dir_all(&dir)?;
     let copy = dir.join("History");
     let result = (|| {
@@ -448,6 +450,29 @@ fn read_history(path: &Path, browser: &'static str) -> io::Result<Vec<Page>> {
     })();
     let _ = fs::remove_dir_all(&dir);
     result
+}
+
+const HISTORY_COPY: &str = "seekr-history-";
+
+/// A Seekr ended mid-read (killed, or the PC losing power) leaves its copy of someone's browsing
+/// history in TEMP; any copy older than `age` is one of those, as a read takes milliseconds.
+fn sweep_stale_copies(temp: &Path, age: Duration) {
+    let Ok(entries) = fs::read_dir(temp) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let stale = entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(HISTORY_COPY)
+            && entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .is_ok_and(|t| t.elapsed().is_ok_and(|e| e > age));
+        if stale {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -485,6 +510,25 @@ mod tests {
             "jira",
         );
         assert_eq!(web.engines.read().unwrap().search, "jira");
+    }
+
+    #[test]
+    fn sweeps_only_stale_history_copies() {
+        let temp = std::env::temp_dir().join(format!("seekr-sweep-test-{}", std::process::id()));
+        for name in ["seekr-history-1", "other-app"] {
+            fs::create_dir_all(temp.join(name)).unwrap();
+            fs::write(temp.join(name).join("History"), "x").unwrap();
+        }
+        sweep_stale_copies(&temp, Duration::from_secs(600));
+        assert!(
+            temp.join("seekr-history-1").exists(),
+            "a copy being read stays"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+        sweep_stale_copies(&temp, Duration::from_millis(10));
+        assert!(!temp.join("seekr-history-1").exists(), "an old copy goes");
+        assert!(temp.join("other-app").exists(), "nothing else is touched");
+        fs::remove_dir_all(&temp).unwrap();
     }
 
     #[test]
