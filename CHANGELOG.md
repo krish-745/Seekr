@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.0 - 2026-10-23
+
+The first release.
+
 - Updates: once a day (from ten minutes after start; `check_updates`, in Settings under General, turns it off) Seekr reads `latest.json` from the latest GitHub release; a newer version shows as an "Update Seekr to …" row, and the tray has "Check for updates". Installing downloads the installer, checks its signature against the maintainer's key, and runs it in passive mode, which restarts Seekr. Uses Windows' own TLS (native-tls), so no new licenses. `package.ps1` signs the installer and writes `latest.json`; `-Unsigned` makes a test build.
 - GitHub Actions runs the checks of `check.ps1` on Windows for every push and pull request, apart from the WebDriver smoke test, which needs a signed-in desktop.
 - Windows installer (`scripts/package.ps1`, NSIS through Tauri with `tauri.nsis.json`): per user in `%LOCALAPPDATA%\Programs\Seekr` (a copy of Tauri 2.12.3's template with only that folder changed, as its default was Seekr's data folder), with the content indexer, DirectML.dll, the privacy note and third-party notices; it starts Seekr hidden at login, sets the power-saving GPU, and installs the SeekrIndex service with one UAC prompt, only when the service is missing or changed (`seekr-svc current` checks without administrator rights). Uninstalling removes the service, the login entry and the GPU setting, and keeps your data.

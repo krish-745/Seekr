@@ -2,7 +2,7 @@
 
 A fast keyboard launcher for Windows: apps, files, file contents and meaning, plus everyday tools, all on one hotkey.
 
-**Status:** before the first release (0.1.0): build its installer from source (see Install). Alt+Space opens the search panel: installed apps (Start menu and Store), every file and folder name on your fixed drives, the text inside files in the folders you choose (asked the first time the panel opens), matched by words and by meaning, plus a calculator, clipboard history, a window switcher, system controls, web search, emoji, notes and to-dos, and AI answers about your files from a model on your GPU.
+**Status:** 0.1.0, the first release; Windows 11, x64. Alt+Space opens the search panel: installed apps (Start menu and Store), every file and folder name on your fixed drives, the text inside files in the folders you choose (asked the first time the panel opens), matched by words and by meaning, plus a calculator, clipboard history, a window switcher, system controls, web search, emoji, notes and to-dos, and AI answers about your files from a model on your GPU.
 
 Everything Seekr indexes stays on your PC; [PRIVACY.md](PRIVACY.md) lists what it stores and the few times it uses the network.
 
@@ -10,7 +10,7 @@ Everything Seekr indexes stays on your PC; [PRIVACY.md](PRIVACY.md) lists what i
 
 ## Install
 
-Seekr isn't released yet; build the installer with `scripts\package.ps1` (it writes `target\release\bundle\nsis\Seekr_0.1.0_x64-setup.exe`) and run it. It installs for your account in `%LOCALAPPDATA%\Programs\Seekr`, starts Seekr hidden at login on the power-saving GPU, and installs the SeekrIndex service for whole-drive file search, which asks for one UAC approval (and again only when an update changes the service; decline it and C: uses a slower scan instead). The meaning-search model (about 750 MB) is offered for download when you choose the folders to search inside. Uninstall from Settings → Apps; your data in `%LOCALAPPDATA%\Seekr` and `%APPDATA%\Seekr` is kept.
+Download `Seekr_0.1.0_x64-setup.exe` from [Releases](https://github.com/krish-745/Seekr/releases/latest) and run it (Windows may warn about an unrecognized app: More info → Run anyway; the installer isn't code-signed yet). To build it yourself, run `scripts\package.ps1 -Unsigned`. It installs for your account in `%LOCALAPPDATA%\Programs\Seekr`, starts Seekr hidden at login on the power-saving GPU, and installs the SeekrIndex service for whole-drive file search, which asks for one UAC approval (and again only when an update changes the service; decline it and C: uses a slower scan instead). The meaning-search model (about 750 MB) is offered for download when you choose the folders to search inside. Uninstall from Settings → Apps; your data in `%LOCALAPPDATA%\Seekr` and `%APPDATA%\Seekr` is kept.
 
 For development, `install.ps1` builds and installs the same way without an installer. It copies the app to `%LOCALAPPDATA%\Programs\Seekr` (starts hidden at login, power-saving GPU), downloads the meaning-search model (about 750 MB, once) to `%LOCALAPPDATA%\Seekr\models`, and installs the SeekrIndex service to `C:\Program Files\Seekr`, which asks for one UAC approval:
 
@@ -135,6 +135,16 @@ Everything is saved to `%APPDATA%\Seekr\config.toml` (your comments in it are ke
 - Screen readers (Narrator, NVDA) follow the selection: the query box is a combobox over the results list, and the actions menu, settings and folder picker are lists that name the current entry. An AI answer is read once it is written, not word by word; confirmations and errors are announced.
 - Windows' high-contrast themes are followed, with the selection outlined in the theme's colors.
 - Nothing in the panel moves, and with "Animation effects" off in Windows, motion added by a theme.css is stopped too.
+
+## Known limitations
+
+- Text inside PDFs isn't searched; their names are.
+- Exclusions are folder paths or whole names, without wildcards.
+- `?` needs an NVIDIA GPU: only llama.cpp's CUDA build is offered.
+- A download that stops starts over the next time.
+- If another program owns the hotkey you had, Seekr falls back to a keyboard hook, which keeps the old hotkey until Seekr restarts.
+- The installer isn't code-signed, so Windows SmartScreen warns about it.
+- Built and tested on one Windows 11 PC; the screen-reader support hasn't been tried with Narrator or NVDA yet.
 
 ## Develop
 
