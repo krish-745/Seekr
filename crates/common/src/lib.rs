@@ -64,6 +64,8 @@ pub struct Config {
     pub ai_idle_minutes: u32,
     /// Index content meaning on battery too; by default a big pass waits for mains power.
     pub embed_on_battery: bool,
+    /// Look for a newer Seekr on GitHub once a day.
+    pub check_updates: bool,
     /// How the panel looks.
     pub theme: Theme,
 }
@@ -206,6 +208,7 @@ impl Default for Config {
             clipboard_entries: 1_000,
             ai_idle_minutes: 10,
             embed_on_battery: false,
+            check_updates: true,
             theme: Theme::default(),
         }
     }

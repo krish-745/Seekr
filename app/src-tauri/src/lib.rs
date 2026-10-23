@@ -24,6 +24,7 @@ mod settings;
 mod switcher;
 mod system;
 mod telemetry;
+mod update;
 mod web;
 
 use tauri::{
@@ -226,8 +227,9 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     let login =
         CheckMenuItem::with_id(app, "login", "Start at login", true, at_login, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
+    let updates = MenuItem::with_id(app, "updates", "Check for updates", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &settings, &login, &quit])?;
+    let menu = Menu::with_items(app, &[&open, &settings, &updates, &login, &quit])?;
     let icon = app
         .default_window_icon()
         .cloned()
@@ -243,6 +245,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
                 show(app);
                 log_err("open settings", app.emit("open-settings", ()));
             }
+            "updates" => update::check_now(app),
             "login" => set_autostart(app, &login),
             "quit" => app.exit(0),
             _ => {}
@@ -291,6 +294,7 @@ pub fn run() {
     }
     builder
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             Some(vec![HIDDEN_ARG]),
@@ -358,6 +362,7 @@ pub fn run() {
             app.manage(ai::Ai::new(&config));
             settings::start(app.handle());
             ai::start_reaper(app.handle());
+            update::start(app.handle());
             indexer::start(app.handle());
             content::start_reaper(app.handle());
             register_hotkey(app.handle(), &config.hotkey);

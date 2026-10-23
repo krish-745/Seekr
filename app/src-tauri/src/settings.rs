@@ -360,6 +360,14 @@ fn fields(c: &Config) -> Vec<Field> {
             "Empty for the API's default",
         ),
         field(
+            "check_updates",
+            "General",
+            "Check for updates",
+            "toggle",
+            json!(c.check_updates),
+            "Once a day, from GitHub; an update installs only when you choose it",
+        ),
+        field(
             "embed_on_battery",
             "Power",
             "Index meaning on battery",

@@ -35,6 +35,7 @@ them to remove everything.
 | When | Where | What is sent |
 |---|---|---|
 | You ask a general question with `??` | Groq (`api.groq.com`) or Google's Gemini API, whichever key you set | Your question and the earlier `??` questions and answers of that conversation. Never your files, file names or `?` answers |
+| Once a day, unless "Check for updates" is off | `github.com` (this project's releases) | A request for the latest version's description; an update downloads only when you choose to install it, and its signature is checked first |
 | You convert a currency, at most once a day | `api.frankfurter.dev` (European Central Bank rates) | A request for the day's rates; nothing about you or the amount |
 | You press Enter to download the `?` model | GitHub (llama.cpp releases) and Hugging Face | Ordinary download requests |
 | The installer fetches the meaning-search model | Hugging Face | Ordinary download requests |

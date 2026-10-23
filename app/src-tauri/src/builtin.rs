@@ -91,6 +91,9 @@ pub(crate) const CONFIG_TEMPLATE: &str = "\
 # Index meaning on battery too; by default a big pass waits for mains power.
 # embed_on_battery = true
 #
+# Look for a newer Seekr on GitHub once a day; it is installed only when you choose to.
+# check_updates = false
+#
 # Web shortcuts: type the key, a space and your words. %s is where the words go.
 # [shortcuts]
 # jira = \"https://example.atlassian.net/browse/%s\"
@@ -138,6 +141,7 @@ pub fn all() -> Vec<Item> {
         "seekr:clipboard" => tools.clipboard,
         _ => true,
     });
+    items.extend(crate::update::item());
     items
 }
 
@@ -291,6 +295,11 @@ pub fn run(app: &AppHandle, item: &str, action: &str) -> Result<(), String> {
             if resume {
                 app.state::<crate::indexer::Indexer>().refresh();
             }
+            return Ok(());
+        }
+        ("seekr:update", "install") => {
+            crate::hide_panel(app, false);
+            crate::update::install(app);
             return Ok(());
         }
         ("seekr:config", "open") => {

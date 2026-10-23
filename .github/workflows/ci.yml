@@ -37,12 +37,13 @@ jobs:
         run: cargo test --workspace
       - name: cargo deny
         run: cargo deny check
-      - name: third-party notices
-        shell: powershell
-        run: scripts\notices.ps1 -Check
       - name: npm ci
         working-directory: app
         run: npm ci
+      # After npm ci: the notices list the panel's npm packages.
+      - name: third-party notices
+        shell: powershell
+        run: scripts\notices.ps1 -Check
       - name: tsc
         working-directory: app
         run: npm run typecheck
