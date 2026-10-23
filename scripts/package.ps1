@@ -1,5 +1,5 @@
 # Builds the Windows installer, target\release\bundle\nsis\Seekr_<version>_x64-setup.exe: the app,
-# the content indexer, the SeekrIndex service and DirectML.dll, with the hooks in
+# the content indexer, the SeekrIndex service, DirectML.dll and pdfium.dll, with the hooks in
 # app\src-tauri\windows\hooks.nsh. tauri.nsis.json is merged in only here, so other builds don't
 # need the indexer and service built first.
 #
@@ -13,7 +13,10 @@ $nsis = Join-Path $root 'target\release\bundle\nsis'
 
 $extra = @()
 if ($Unsigned) {
-    $extra = '--config', '{"bundle":{"createUpdaterArtifacts":false}}'
+    # A file, not inline JSON: PowerShell 5.1 strips the quotes from arguments to npm.
+    $unsignedConfig = Join-Path $env:TEMP "seekr-unsigned-$PID.json"
+    [IO.File]::WriteAllText($unsignedConfig, '{"bundle":{"createUpdaterArtifacts":false}}')
+    $extra = '--config', $unsignedConfig
 } else {
     if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
         $key = Join-Path $env:USERPROFILE '.tauri\seekr-updater.key'
@@ -36,6 +39,7 @@ try {
 } finally {
     Pop-Location
     Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
+    if ($unsignedConfig) { Remove-Item $unsignedConfig -ErrorAction SilentlyContinue }
 }
 
 $version = (Get-Content (Join-Path $root 'app\src-tauri\tauri.conf.json') -Raw | ConvertFrom-Json).version
