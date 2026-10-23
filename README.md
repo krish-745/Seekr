@@ -6,8 +6,6 @@ A fast keyboard launcher for Windows: apps, files, file contents and meaning, pl
 
 Everything Seekr indexes stays on your PC; [PRIVACY.md](PRIVACY.md) lists what it stores and the few times it uses the network.
 
-![Seekr finding Paint and matching Windows Settings pages](docs/screenshots/apps.png)
-
 ## Install
 
 Download `Seekr_0.1.0_x64-setup.exe` from [Releases](https://github.com/krish-745/Seekr/releases/latest) and run it (Windows may warn about an unrecognized app: More info → Run anyway; the installer isn't code-signed yet). To build it yourself, run `scripts\package.ps1 -Unsigned`. It installs for your account in `%LOCALAPPDATA%\Programs\Seekr`, starts Seekr hidden at login on the power-saving GPU, and installs the SeekrIndex service for whole-drive file search, which asks for one UAC approval (and again only when an update changes the service; decline it and C: uses a slower scan instead). The meaning-search model (about 750 MB) is offered for download when you choose the folders to search inside. Uninstall from Settings → Apps; your data in `%LOCALAPPDATA%\Seekr` and `%APPDATA%\Seekr` is kept.
@@ -39,8 +37,6 @@ File names match fuzzily from the second character. Add filters anywhere in the 
 | `-` | `-draft` | names not containing that text |
 
 ## Calculator
-
-![The calculator answering (1200 * 1.18) / 12](docs/screenshots/calculator.png) ![250 USD converted to rupees at the ECB's daily rate](docs/screenshots/currency.png)
 
 Type a calculation and its result comes first; Enter copies it.
 
@@ -79,8 +75,6 @@ Bookmarks and history from Brave, Chrome and Edge show up as you type; the last 
 
 ## Emoji and symbols
 
-![Emoji matching :fire](docs/screenshots/emoji.png)
-
 Type `:` and a word: `:fire`, `:laugh`, `:indian rupee`, `:double arrow`, `:greek small pi`, `:half`. Enter pastes, Ctrl+Enter copies, and Tab lists skin tones where an emoji has them.
 
 ## Notes and to-dos
@@ -106,8 +100,6 @@ The model for `?` isn't part of the install. The first time, the `?` row says so
 With both set, `api = "groq"` in `%APPDATA%\Seekr\config.toml` picks Groq; `api_model` picks the model (defaults: `openai/gpt-oss-120b` on Groq, `gemini-3.5-flash` on Gemini).
 
 ## Settings
-
-![The settings view, grouped, with the selected entry highlighted](docs/screenshots/settings.png)
 
 Type `settings` (or use the tray icon's Settings) for the settings view. Arrow keys move, Enter changes the selected setting (a list, such as your web shortcuts, saves with Ctrl+Enter), and Esc closes it. You can change:
 - the hotkey
@@ -154,7 +146,6 @@ Requirements: Windows 11, Rust (stable, MSVC), Visual Studio Build Tools with th
 scripts\dev.ps1     # run the app with hot reload
 scripts\check.ps1   # fmt, clippy, tests, cargo-deny, typecheck, vitest, release build, WebDriver smoke test
 scripts\smoke.ps1   # just the smoke test, on the last release build
-scripts\smoke.ps1 -Script app\e2e\screenshots.mjs   # retake the README screenshots (shows the panel; check them before committing)
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for what a pull request needs, and [docs/hardening.md](docs/hardening.md) for how Seekr was tested.

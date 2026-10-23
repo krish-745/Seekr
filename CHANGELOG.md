@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A mouse press on a result selects it at once and leaves typing in the search box. Results and menu entries show a faint fill under the pointer, and menu entries show the press.
+- The actions menu is a blurred, Windows-style material that grows in from its corner (not with reduced motion), and turns solid when Windows' transparency effects are off.
+- Error text uses the theme's error color, which is easier to read in light mode.
+- The README has no screenshots; `app/e2e/screenshots.mjs` and `docs/screenshots` are gone.
+
 ## 0.1.0 - 2026-10-23
 
 The first release.

@@ -2,7 +2,7 @@
 # and the msedgedriver matching the installed WebView2. The test instance gets its own data and
 # config folders, so it runs beside an installed Seekr without touching its index or settings.
 # -Keep leaves the test instance's data folder, with its log, in %TEMP%. -Script runs another
-# WebDriver script the same way, such as app\e2e\screenshots.mjs.
+# WebDriver script the same way.
 param([int]$Port = 4444, [switch]$Keep, [string]$Script = (Join-Path (Split-Path $PSScriptRoot -Parent) 'app\e2e\smoke.mjs'))
 
 $ErrorActionPreference = 'Stop'
