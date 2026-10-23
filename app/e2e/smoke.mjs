@@ -64,6 +64,8 @@ try {
     await clear();
     await keys(input, "seekr");
     await until("two results", "return document.querySelectorAll('.row').length >= 2");
+    // Those may be for "seek": the results for "seekr" replace them and select the first again.
+    await new Promise((done) => setTimeout(done, 500));
     assert.equal(await active(), "row-0");
     await keys(input, KEY.ArrowDown);
     assert.equal(await active(), "row-1");
