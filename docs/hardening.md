@@ -35,9 +35,18 @@ the actions menu and the settings view with axe-core (no violations) and follows
 by keyboard through `aria-activedescendant`. Not yet tried with a running screen reader or a
 high-contrast theme on screen; those need the panel driven on this PC.
 
+## 7.4 Automated tests
+
+| Test | How | Result |
+|---|---|---|
+| WebDriver smoke test | `scripts/smoke.ps1` (also the last step of `check.ps1`): the release build under tauri-driver 2.1.0 and msedgedriver 155.0.4283.62, matching the installed WebView2, with its own data and config folders beside the installed Seekr | Passed 3 runs of 3, about 3 s of checks each: the calculator, arrow keys moving `aria-activedescendant`, Tab and Esc on the actions menu, the settings view and Diagnostics with the panel hidden; then the real hotkey, which showed and focused the panel, and Esc, which hid it and gave focus back to the window used before. Writing it found nothing in Seekr; it did show that a first focus asks for content folders over the results, so the test answers that in advance |
+| Hotkey | The smoke test's last check, with Ctrl+Alt+Shift+F12 pressed through `keybd_event` once input has been idle for 2 s; key mapping for the hook fallback in `hotkey::tests` | Passed. The keyboard-hook fallback (used when another program owns the combination) isn't driven: it needs a second program holding the hotkey |
+| Service and pipe | `cargo test -p service --test live -- --ignored` against the installed SeekrIndex, with Seekr quit (the pipe takes one client); the pipe's ACL and single-server rule in `security::tests`; the wire format in `fsindex` | Passed: 2,097,583 names in 1.8 s, a new file reported 0.6 ms after it was created, other profiles and the service's own logs hidden |
+
 ## 7.2 Soak
 
 `scripts/soak.ps1` samples Seekr's processes (CPU time, working set, private memory, handles,
 threads), the GPU's power state and the battery every five minutes, to
-`%LOCALAPPDATA%\Seekr\soak`; `scripts/soak.ps1 -Report` summarizes a run. A 72-hour run started
-on 23 October 2026 at 01:57 with Seekr in normal use; its results go here when it ends.
+`%LOCALAPPDATA%\Seekr\soak`; `scripts/soak.ps1 -Report` summarizes a run. Not run yet: a
+72-hour run started on 23 October 2026 was stopped within its first hour. The PC has to stay on
+and awake for the whole run.

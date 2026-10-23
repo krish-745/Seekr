@@ -24,9 +24,9 @@ pub fn data_dir() -> PathBuf {
     std::env::var_os("SEEKR_DATA_DIR").map_or_else(|| env_dir("LOCALAPPDATA"), PathBuf::from)
 }
 
-/// `%APPDATA%\Seekr`: user config.
+/// `%APPDATA%\Seekr`: user config. `SEEKR_CONFIG_DIR` replaces it, as `SEEKR_DATA_DIR` does.
 pub fn config_dir() -> PathBuf {
-    env_dir("APPDATA")
+    std::env::var_os("SEEKR_CONFIG_DIR").map_or_else(|| env_dir("APPDATA"), PathBuf::from)
 }
 
 fn env_dir(var: &str) -> PathBuf {

@@ -283,9 +283,13 @@ fn set_autostart(app: &AppHandle, item: &CheckMenuItem<tauri::Wry>) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _log_guard = common::init_logging("seekr").expect("failed to start logging");
-    tauri::Builder::default()
-        // Must be first: a second launch shows the running panel and exits.
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| show(app)))
+    let mut builder = tauri::Builder::default();
+    // Must be first: a second launch shows the running panel and exits. A run with its own
+    // data folder, such as the WebDriver smoke test, is a separate instance.
+    if std::env::var_os("SEEKR_DATA_DIR").is_none() {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| show(app)));
+    }
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,

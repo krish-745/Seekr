@@ -1,5 +1,6 @@
 //! Against the installed SeekrIndex service, run as the signed-in user (not elevated):
-//! `cargo test -p service --test live -- --ignored --nocapture`.
+//! `cargo test -p service --test live -- --ignored --nocapture`. Quit Seekr first: the pipe
+//! serves one client at a time, and a running Seekr holds it.
 
 use std::{
     fs,

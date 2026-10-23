@@ -130,7 +130,8 @@ Requirements: Windows 11, Rust (stable, MSVC), Visual Studio Build Tools with th
 
 ```powershell
 scripts\dev.ps1     # run the app with hot reload
-scripts\check.ps1   # fmt, clippy, tests, cargo-deny, typecheck, vitest, release build
+scripts\check.ps1   # fmt, clippy, tests, cargo-deny, typecheck, vitest, release build, WebDriver smoke test
+scripts\smoke.ps1   # just the smoke test, on the last release build
 ```
 
 ## License

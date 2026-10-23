@@ -20,6 +20,8 @@ try {
         Step 'vitest' { npm test }
         Step 'release build' { npm run tauri build -- --no-bundle }
         Step 'service and indexer release build' { cargo build --release -p service -p indexer }
+        # Its own process: the script ends with exit.
+        Step 'WebDriver smoke test' { powershell -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\smoke.ps1" }
     } finally { Pop-Location }
     Write-Host 'All checks passed.' -ForegroundColor Green
 } finally { Pop-Location }
