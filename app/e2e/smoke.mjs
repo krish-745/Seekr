@@ -120,7 +120,13 @@ try {
     const before = pressed.stdout.trim();
     await until("the panel", "return document.hasFocus() && document.activeElement === document.querySelector('input.query')");
     await keys(input, KEY.Escape);
-    await until("the panel to hide", "return !document.hasFocus()");
+    await until("the panel to hide", "return !document.hasFocus()").catch(async (e) => {
+      // Failed once in about eight runs; this says what the panel was doing.
+      const state = await js(
+        "return JSON.stringify({ focused: document.hasFocus(), visibility: document.visibilityState, active: document.activeElement?.className, covered: !!document.querySelector('section.setup'), query: document.querySelector('input.query').value })",
+      );
+      throw new Error(`${e.message}: ${state}`);
+    });
     assert.equal(run().stdout.trim(), before, "focus went back to the window used before");
   });
 
