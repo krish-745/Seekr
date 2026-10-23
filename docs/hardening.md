@@ -58,6 +58,7 @@ theme on screen.
 |---|---|---|
 | Install | `Seekr_0.1.0_x64-setup.exe` (26.3 MB) over an `install.ps1` install, run by hand | Passed: offered `%LOCALAPPDATA%\Programs\Seekr`, closed the running Seekr, one UAC prompt for the changed service; the Run entry, GPU preference, Apps entry and Start menu shortcut were written; app and file search worked; `seekr-svc current` then reported the service up to date |
 | Reinstall, same version | The installer again, "Add/Reinstall components" | Passed: no UAC prompt, as the service was unchanged |
+| Update, 0.1.0 to 0.1.1 | The released 0.1.0 installed, then the tray's "Check for updates" and the "Update Seekr to 0.1.1" row | Passed: the update was found, downloaded from the GitHub release, its signature checked, and installed in passive mode; Seekr ran again from the new files 9 s after Enter, with `pdfium.dll` installed and `seekr-svc current` reporting the service up to date |
 | Uninstall | Settings → Apps → Uninstall, keeping app data | Passed: one UAC prompt; the install folder and `C:\Program Files\Seekr` were removed (both found created anew by the following install), and `seekr.db`, the settings and the 750 MB model were kept |
 
 ## Long runs
