@@ -286,7 +286,7 @@ pub fn run_action(
     let owner = crate::panel_hwnd(&app).ok_or("panel window is gone")?;
     // Clipboard entries and windows act on themselves, and aren't recent results either.
     if let Some(clip) = item.strip_prefix("clip:") {
-        tracing::info!("run {item} {action}");
+        tracing::info!("run clip {action}");
         return clips::run(&app, clip, &action);
     }
     if let Some(rest) = item
@@ -323,9 +323,11 @@ pub fn run_action(
         tracing::info!("open settings {page}");
         return system::open_setting(&app, page);
     }
-    tracing::info!("run {item} {action}");
+    // Only the kind: the log isn't a record of which files and pages were opened.
+    let kind = item.split_once(':').map_or(item.as_str(), |(kind, _)| kind);
+    tracing::info!("run {kind} {action}");
     if let Err(e) = ranker.record(&query, &item) {
-        tracing::error!("could not record use of {item}: {e}");
+        tracing::error!("could not record use of a {kind}: {e}");
     }
     match item.split_once(':') {
         Some(("app", id)) => apps::run(&app, id, &action, owner)?,

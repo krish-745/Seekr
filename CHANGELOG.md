@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The log no longer names the file, page or clipboard entry you open, only its kind ("run path open"), so it isn't a record of what you opened.
 - A Seekr ended mid-read (killed, or the PC losing power) left its temporary copy of a browser's History database in TEMP; each read now first deletes copies older than ten minutes.
 - WebDriver smoke test (`scripts/smoke.ps1`, run by `check.ps1`): the release build under tauri-driver 2.1.0 and the msedgedriver matching the installed WebView2 (read from the registry, fetched once into `target\webdriver`), with its own data and config folders (`SEEKR_CONFIG_DIR` now replaces the config folder as `SEEKR_DATA_DIR` does the data folder, and a run with its own data folder skips the single-instance lock), so it runs beside an installed Seekr. It checks the calculator, the selection screen readers follow, the actions menu, the settings view and Diagnostics with the panel hidden, then presses the test instance's hotkey (Ctrl+Alt+Shift+F12, once the keyboard and mouse have been idle for 2 seconds) and checks that the panel takes focus and that Esc hides it and gives focus back to the window used before.
 - The accessibility test stubs `scrollIntoView`, which jsdom lacks; `check.ps1` failed on it when an animation frame ran after the test.
