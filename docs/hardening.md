@@ -48,6 +48,14 @@ theme on screen.
 | Hotkey | The smoke test's last check, with Ctrl+Alt+Shift+F12 pressed through `keybd_event` once input has been idle for 2 s; key mapping for the hook fallback in `hotkey::tests` | Passed. The keyboard-hook fallback (used when another program owns the combination) isn't driven: it needs a second program holding the hotkey |
 | Service and pipe | `cargo test -p service --test live -- --ignored` against the installed SeekrIndex, with Seekr quit (the pipe takes one client); the pipe's ACL and single-server rule in `security::tests`; the wire format in `fsindex` | Passed: 2,097,583 names in 1.8 s, a new file reported 0.6 ms after it was created, other profiles and the service's own logs hidden |
 
+## 8.2 Installer
+
+| Test | How | Result |
+|---|---|---|
+| Install | `Seekr_0.1.0_x64-setup.exe` (26.3 MB) over an `install.ps1` install, run by hand | Passed: offered `%LOCALAPPDATA%\Programs\Seekr`, closed the running Seekr, one UAC prompt for the changed service; the Run entry, GPU preference, Apps entry and Start menu shortcut were written; app and file search worked; `seekr-svc current` then reported the service up to date |
+| Reinstall, same version | The installer again, "Add/Reinstall components" | Passed: no UAC prompt, as the service was unchanged |
+| Uninstall | Settings → Apps → Uninstall, keeping app data | Passed: one UAC prompt; the install folder and `C:\Program Files\Seekr` were removed (both found created anew by the following install), and `seekr.db`, the settings and the 750 MB model were kept |
+
 ## 7.2 Soak
 
 `scripts/soak.ps1` samples Seekr's processes (CPU time, working set, private memory, handles,

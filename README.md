@@ -10,7 +10,9 @@ Everything Seekr indexes stays on your PC; [PRIVACY.md](PRIVACY.md) lists what i
 
 ## Install
 
-Build and install for daily use. This copies the app to `%LOCALAPPDATA%\Programs\Seekr` (starts hidden at login, power-saving GPU), downloads the meaning-search model (about 750 MB, once) to `%LOCALAPPDATA%\Seekr\models`, and installs the SeekrIndex service to `C:\Program Files\Seekr`, which asks for one UAC approval:
+Seekr isn't released yet; build the installer with `scripts\package.ps1` (it writes `target\release\bundle\nsis\Seekr_0.1.0_x64-setup.exe`) and run it. It installs for your account in `%LOCALAPPDATA%\Programs\Seekr`, starts Seekr hidden at login on the power-saving GPU, and installs the SeekrIndex service for whole-drive file search, which asks for one UAC approval (and again only when an update changes the service; decline it and C: uses a slower scan instead). The meaning-search model (about 750 MB) is offered for download when you choose the folders to search inside. Uninstall from Settings → Apps; your data in `%LOCALAPPDATA%\Seekr` and `%APPDATA%\Seekr` is kept.
+
+For development, `install.ps1` builds and installs the same way without an installer. It copies the app to `%LOCALAPPDATA%\Programs\Seekr` (starts hidden at login, power-saving GPU), downloads the meaning-search model (about 750 MB, once) to `%LOCALAPPDATA%\Seekr\models`, and installs the SeekrIndex service to `C:\Program Files\Seekr`, which asks for one UAC approval:
 
 ```powershell
 scripts\install.ps1             # build, install, start
