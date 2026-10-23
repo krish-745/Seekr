@@ -40,8 +40,7 @@ own data and settings, and its last check briefly shows the panel by pressing a 
 Updates are signed with the maintainer's key, `%USERPROFILE%\.tauri\seekr-updater.key`, made
 once with `npx tauri signer generate`; its public half is the updater `pubkey` in
 `app/src-tauri/tauri.conf.json`. `scripts\package.ps1` asks for the key's password and writes
-the installer, its `.sig` and `latest.json` to `targeteleaseundle
-sis`; all three go on
+the installer, its `.sig` and `latest.json` to `target\release\bundle\nsis`; all three go on
 the GitHub release, whose `latest.json` installed copies read. `-Unsigned` builds a test
 installer without the key.
 

@@ -27,7 +27,7 @@ In `%LOCALAPPDATA%\Seekr` (data) and `%APPDATA%\Seekr` (settings):
 - **AI models**, once downloaded: the meaning-search model in `models` and the `?` model in
   `llm`.
 
-Uninstalling with `scripts\install.ps1 -Uninstall` keeps these folders and your notes; delete
+Uninstalling (Settings → Apps, or `scripts\install.ps1 -Uninstall`) keeps these folders and your notes; delete
 them to remove everything.
 
 ## When Seekr uses the network

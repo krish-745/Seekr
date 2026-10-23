@@ -2,7 +2,7 @@
 
 A fast keyboard launcher for Windows: apps, files, file contents and meaning, plus everyday tools, all on one hotkey.
 
-**Status:** before the first release (0.1.0): built from source with `scripts\install.ps1`. Alt+Space opens the search panel: installed apps (Start menu and Store), every file and folder name on your fixed drives, the text inside files in the folders you choose (asked the first time the panel opens), matched by words and by meaning, plus a calculator, clipboard history, a window switcher, system controls, web search, emoji, notes and to-dos, and AI answers about your files from a model on your GPU.
+**Status:** before the first release (0.1.0): build its installer from source (see Install). Alt+Space opens the search panel: installed apps (Start menu and Store), every file and folder name on your fixed drives, the text inside files in the folders you choose (asked the first time the panel opens), matched by words and by meaning, plus a calculator, clipboard history, a window switcher, system controls, web search, emoji, notes and to-dos, and AI answers about your files from a model on your GPU.
 
 Everything Seekr indexes stays on your PC; [PRIVACY.md](PRIVACY.md) lists what it stores and the few times it uses the network.
 
