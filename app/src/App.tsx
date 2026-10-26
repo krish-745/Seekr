@@ -155,6 +155,7 @@ const isDark = () => {
 function App() {
   let input!: HTMLInputElement;
   let list!: HTMLDivElement;
+  let pane!: HTMLElement;
   const [items, setItems] = createSignal<Item[]>([]);
   const [chips, setChips] = createSignal<Chip[]>([]);
   const [query, setQuery] = createSignal("");
@@ -380,6 +381,25 @@ function App() {
     const id = s ? `setting-${s.index}` : setup() ? `folder-${setupIndex()}` : undefined;
     if (id) requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ block: "nearest" }));
   });
+  // As an answer streams, the pane scrolls down to show its end, but never past its question at
+  // the top. Scrolling up stops it until the next question.
+  let following = false;
+  let followedTo = 0;
+  createEffect(() => {
+    answer();
+    const question = following && [...pane.querySelectorAll(".answer .question")].pop();
+    if (!question) return;
+    const top =
+      question.getBoundingClientRect().top -
+      pane.getBoundingClientRect().top +
+      pane.scrollTop -
+      parseFloat(getComputedStyle(pane).paddingTop);
+    const target = Math.min(top, pane.scrollHeight - pane.clientHeight);
+    if (target > pane.scrollTop) {
+      pane.scrollTop = target;
+      followedTo = pane.scrollTop;
+    }
+  });
   let previewTimer = 0;
   // Files and folders get a content preview, asked for once the selection settles.
   createEffect(
@@ -545,6 +565,8 @@ function App() {
     if (!question || before?.busy) return;
     // Switching between ? and ?? starts a new conversation, as does a file's summary.
     const followUp = !file && !!before && before.turns.length > 0 && !before.error && before.general === general;
+    following = true;
+    followedTo = 0;
     setAnswer({
       general,
       file: file ?? (followUp ? before.file : undefined),
@@ -552,8 +574,6 @@ function App() {
       sources: followUp ? before.sources : [],
       busy: true,
     });
-    // Bring the new question to the top of the pane, so a follow-up isn't hidden below the earlier answers.
-    requestAnimationFrame(() => [...document.querySelectorAll(".answer .question")].pop()?.scrollIntoView({ block: "start" }));
     const onEvent = new Channel<AiEvent>();
     onEvent.onmessage = (e) => {
       const a = answer();
@@ -1044,7 +1064,14 @@ function App() {
             </div>
           </Show>
         </div>
-        <aside class="preview" aria-label="Preview">
+        <aside
+          class="preview"
+          aria-label="Preview"
+          ref={pane}
+          onScroll={() => {
+            if (pane.scrollTop < followedTo - 1) following = false;
+          }}
+        >
           <Show when={editing()}>
             {(note) => (
               <textarea
