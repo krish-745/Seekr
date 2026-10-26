@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.2 - 2026-10-26
+
 - `??` uses Gemini when both `GEMINI_API_KEY` and `GROQ_API_KEY` are set and config.toml's `api` is empty (it was Groq). `api = "groq"` still picks Groq.
 - A new `?` or `??` question scrolls to the top of the answer pane, so a follow-up's answer isn't hidden below the earlier ones.
 
