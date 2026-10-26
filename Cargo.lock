@@ -698,7 +698,7 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "serde",
  "toml 1.1.8+spec-1.1.0",
@@ -754,7 +754,7 @@ dependencies = [
 
 [[package]]
 name = "content"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "common",
  "ort",
@@ -1594,7 +1594,7 @@ dependencies = [
 
 [[package]]
 name = "fsindex"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "criterion",
  "nucleo-matcher",
@@ -2359,7 +2359,7 @@ dependencies = [
 
 [[package]]
 name = "indexer"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "common",
  "content",
@@ -4317,7 +4317,7 @@ dependencies = [
 
 [[package]]
 name = "seekr"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -4540,7 +4540,7 @@ dependencies = [
 
 [[package]]
 name = "service"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "common",
  "fsindex",

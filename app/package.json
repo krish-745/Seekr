@@ -1,6 +1,6 @@
 {
   "name": "seekr",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Fast keyboard launcher for Windows",
   "type": "module",
   "scripts": {

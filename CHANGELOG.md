@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.3 - 2026-10-26
+
 - As a `?` or `??` answer streams in, the answer pane scrolls to keep its end in view, stopping once the question reaches the top; 0.1.2 scrolled only as far as the question, so the answer was still out of view. Scrolling up stops it until the next question.
 
 ## 0.1.2 - 2026-10-26

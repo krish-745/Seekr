@@ -3,7 +3,7 @@ resolver = "3"
 members = ["app/src-tauri", "crates/common", "crates/content", "crates/fsindex", "crates/indexer", "crates/service"]
 
 [workspace.package]
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = ["krish-745"]
