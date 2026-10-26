@@ -81,17 +81,8 @@ struct Api {
     no_thinking: Option<(&'static str, &'static str)>,
 }
 
-/// In order of preference when config.toml doesn't name one: Groq answers fastest.
+/// In order of preference when config.toml doesn't name one.
 const APIS: [Api; 2] = [
-    Api {
-        name: "groq",
-        label: "Groq",
-        url: "https://api.groq.com/openai/v1/chat/completions",
-        key: "GROQ_API_KEY",
-        model: "openai/gpt-oss-120b",
-        // gpt-oss always reasons; the least of it gets to the answer soonest.
-        no_thinking: Some(("reasoning_effort", "low")),
-    },
     Api {
         name: "gemini",
         label: "Gemini API",
@@ -99,6 +90,15 @@ const APIS: [Api; 2] = [
         key: "GEMINI_API_KEY",
         model: "gemini-3.5-flash",
         // Gemini 3 thinks at "low" at the least; the flash-latest alias was often overloaded.
+        no_thinking: Some(("reasoning_effort", "low")),
+    },
+    Api {
+        name: "groq",
+        label: "Groq",
+        url: "https://api.groq.com/openai/v1/chat/completions",
+        key: "GROQ_API_KEY",
+        model: "openai/gpt-oss-120b",
+        // gpt-oss always reasons; the least of it gets to the answer soonest.
         no_thinking: Some(("reasoning_effort", "low")),
     },
 ];

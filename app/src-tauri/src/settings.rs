@@ -333,14 +333,14 @@ fn fields(c: &Config) -> Vec<Field> {
             "It hands the graphics memory back",
         ),
         Field {
-            choices: &["", "groq", "gemini"],
+            choices: &["", "gemini", "groq"],
             ..field(
                 "api",
                 "AI",
                 "Cloud API for ??",
                 "choice",
                 json!(c.api),
-                "Empty: Groq if its key is set, else Gemini",
+                "Empty: Gemini if its key is set, else Groq",
             )
         },
         field(

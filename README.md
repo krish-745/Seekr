@@ -94,10 +94,10 @@ The model for `?` isn't part of the install. The first time, the `?` row says so
 `??` needs a Gemini or Groq key in your own environment (never in a file you share); both have free tiers:
 
 ```powershell
-[Environment]::SetEnvironmentVariable('GROQ_API_KEY', 'your-key', 'User')   # or GEMINI_API_KEY
+[Environment]::SetEnvironmentVariable('GEMINI_API_KEY', 'your-key', 'User')   # or GROQ_API_KEY
 ```
 
-With both set, `api = "groq"` in `%APPDATA%\Seekr\config.toml` picks Groq; `api_model` picks the model (defaults: `openai/gpt-oss-120b` on Groq, `gemini-3.5-flash` on Gemini).
+With both set, Gemini answers; `api = "groq"` in `%APPDATA%\Seekr\config.toml` picks Groq instead. `api_model` picks the model (defaults: `gemini-3.5-flash` on Gemini, `openai/gpt-oss-120b` on Groq).
 
 ## Settings
 
