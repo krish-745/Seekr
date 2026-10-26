@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A new `?` or `??` question scrolls to the top of the answer pane, so a follow-up's answer isn't hidden below the earlier ones.
+
 ## 0.1.1 - 2026-10-24
 
 - PDF text is searched, by words and by meaning, in the folders you choose. `pdfium.dll` (PDFium build 7881 from bblanchon/pdfium-binaries, about 7 MB, fetched once by `crates/content/build.rs` and checked against its SHA-256) is shipped beside the content indexer. A content match in a PDF previews the text around it, and Summarize with AI works on PDFs. Scanned pages without a text layer add nothing, as there is no OCR.

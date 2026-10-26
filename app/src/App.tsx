@@ -552,6 +552,8 @@ function App() {
       sources: followUp ? before.sources : [],
       busy: true,
     });
+    // Bring the new question to the top of the pane, so a follow-up isn't hidden below the earlier answers.
+    requestAnimationFrame(() => [...document.querySelectorAll(".answer .question")].pop()?.scrollIntoView({ block: "start" }));
     const onEvent = new Channel<AiEvent>();
     onEvent.onmessage = (e) => {
       const a = answer();
